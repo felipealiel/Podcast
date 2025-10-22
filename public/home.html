@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PobreFy Streaming - Home</title>
+    <link rel="stylesheet" href="/css/style.css">
+    <style>
+        .home-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+
+        .welcome {
+            text-align: center;
+            margin-bottom: 60px;
+        }
+
+        .welcome h1 {
+            font-size: 48px;
+            margin-bottom: 16px;
+            color: var(--spotify-green);
+        }
+
+        .user-info {
+            background: var(--spotify-gray);
+            padding: 32px;
+            border-radius: 8px;
+            margin-bottom: 32px;
+        }
+
+        .user-info h2 {
+            margin-bottom: 16px;
+            color: var(--spotify-green);
+        }
+
+        .user-info p {
+            margin: 8px 0;
+            color: var(--spotify-light-gray);
+        }
+
+        .user-info strong {
+            color: var(--spotify-white);
+        }
+
+        .actions {
+            display: flex;
+            gap: 16px;
+            justify-content: center;
+            margin-top: 32px;
+        }
+
+        .btn-secondary {
+            padding: 12px 32px;
+            border: 1px solid var(--spotify-white);
+            border-radius: 500px;
+            background: transparent;
+            color: var(--spotify-white);
+            font-size: 14px;
+            font-weight: 700;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+
+        .btn-secondary:hover {
+            background: var(--spotify-white);
+            color: var(--spotify-black);
+        }
+    </style>
+</head>
+<body>
+    <div class="home-container">
+        <div class="welcome">
+            <h1>🎵 Bem-vindo ao PobreFy!</h1>
+            <p style="font-size: 18px; color: var(--spotify-light-gray);">
+                Sua conta foi criada com sucesso. Aproveite!
+            </p>
+        </div>
+
+        <div class="user-info" id="userInfo">
+            <h2>Informações da Conta</h2>
+            <p><strong>Carregando...</strong></p>
+        </div>
+
+        <div class="actions">
+            <button class="btn-primary" onclick="alert('Explorar músicas em breve!')">
+                Explorar Músicas
+            </button>
+            <button class="btn-primary" onclick="alert('Explorar podcasts em breve!')">
+                Explorar Podcasts
+            </button>
+            <button class="btn-secondary" onclick="logout()">
+                Sair
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/api/v1';
+        const token = localStorage.getItem('token');
+
+        // Verificar se está logado
+        if (!token) {
+            window.location.href = '/index.html';
+        }
+
+        // Carregar dados do usuário
+        async function loadUserData() {
+            try {
+                const response = await fetch(`${API_URL}/auth/me`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                if (response.ok) {
+                    const data = await response.json();
+                    const user = data.data.user;
+
+                    document.getElementById('userInfo').innerHTML = `
+                        <h2>Informações da Conta</h2>
+                        <p><strong>Nome de Usuário:</strong> ${user.nomeUsuario}</p>
+                        <p><strong>Email:</strong> ${user.email}</p>
+                        <p><strong>Nome:</strong> ${user.fullName || 'Não informado'}</p>
+                        <p><strong>Plano:</strong> ${user.account.subscription.toUpperCase()}</p>
+                        <p><strong>Membro desde:</strong> ${new Date(user.createdAt).toLocaleDateString('pt-BR')}</p>
+                    `;
+                } else {
+                    // Token inválido
+                    localStorage.removeItem('token');
+                    localStorage.removeItem('user');
+                    window.location.href = '/index.html';
+                }
+            } catch (error) {
+                console.error('Erro ao carregar dados:', error);
+            }
+        }
+
+        // Logout
+        function logout() {
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            window.location.href = '/index.html';
+        }
+
+        // Carregar dados ao carregar a página
+        loadUserData();
+    </script>
+</body>
+</html>
+
