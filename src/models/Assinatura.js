@@ -236,8 +236,7 @@ const assinaturaSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Índices para otimização
-assinaturaSchema.index({ usuarioId: 1 });
+// Índices para otimização (usuarioId já tem índice único automático)
 assinaturaSchema.index({ tipo: 1 });
 assinaturaSchema.index({ plano: 1 });
 assinaturaSchema.index({ status: 1 });

@@ -187,9 +187,7 @@ const userSchema = new mongoose.Schema({
   toObject: { virtuals: true }
 });
 
-// Índices
-userSchema.index({ email: 1 });
-userSchema.index({ nomeUsuario: 1 });
+// Índices (email e nomeUsuario já têm índice único automático)
 userSchema.index({ 'account.subscription': 1 });
 userSchema.index({ 'stats.totalSubscribers': -1 });
 userSchema.index({ createdAt: -1 });

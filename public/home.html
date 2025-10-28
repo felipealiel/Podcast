@@ -90,63 +90,13 @@
             <button class="btn-primary" onclick="alert('Explorar podcasts em breve!')">
                 Explorar Podcasts
             </button>
-            <button class="btn-secondary" onclick="logout()">
+            <button class="btn-secondary" id="logoutBtn">
                 Sair
             </button>
         </div>
     </div>
 
-    <script>
-        const API_URL = 'http://localhost:3000/api/v1';
-        const token = localStorage.getItem('token');
-
-        // Verificar se está logado
-        if (!token) {
-            window.location.href = '/index.html';
-        }
-
-        // Carregar dados do usuário
-        async function loadUserData() {
-            try {
-                const response = await fetch(`${API_URL}/auth/me`, {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
-                });
-
-                if (response.ok) {
-                    const data = await response.json();
-                    const user = data.data.user;
-
-                    document.getElementById('userInfo').innerHTML = `
-                        <h2>Informações da Conta</h2>
-                        <p><strong>Nome de Usuário:</strong> ${user.nomeUsuario}</p>
-                        <p><strong>Email:</strong> ${user.email}</p>
-                        <p><strong>Nome:</strong> ${user.fullName || 'Não informado'}</p>
-                        <p><strong>Plano:</strong> ${user.account.subscription.toUpperCase()}</p>
-                        <p><strong>Membro desde:</strong> ${new Date(user.createdAt).toLocaleDateString('pt-BR')}</p>
-                    `;
-                } else {
-                    // Token inválido
-                    localStorage.removeItem('token');
-                    localStorage.removeItem('user');
-                    window.location.href = '/index.html';
-                }
-            } catch (error) {
-                console.error('Erro ao carregar dados:', error);
-            }
-        }
-
-        // Logout
-        function logout() {
-            localStorage.removeItem('token');
-            localStorage.removeItem('user');
-            window.location.href = '/index.html';
-        }
-
-        // Carregar dados ao carregar a página
-        loadUserData();
-    </script>
+    <script src="/js/home.js"></script>
 </body>
 </html>
 
