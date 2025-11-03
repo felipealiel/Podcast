@@ -77,22 +77,27 @@ async function demonstrarConexao() {
   console.log('📦 COLEÇÕES NO BANCO:\n');
   
   for (const coll of collections) {
-    const collStats = await mongoose.connection.db.collection(coll.name).stats();
-    console.log(`\n📁 ${coll.name}`);
-    console.log(`   Documentos: ${collStats.count}`);
-    console.log(`   Tamanho: ${(collStats.size / 1024).toFixed(2)} KB`);
-    console.log(`   Índices: ${collStats.nindexes}`);
-    
-    // Mostrar shard key se existir
-    if (coll.name === 'podcasts') {
-      console.log(`   🔀 Shard Key: { categoria: 1, _id: 1 }`);
-      console.log(`   ↳ Dados distribuídos por CATEGORIA`);
-    } else if (coll.name === 'musicas') {
-      console.log(`   🔀 Shard Key: { genero: 1, _id: 1 }`);
-      console.log(`   ↳ Dados distribuídos por GÊNERO`);
-    } else if (coll.name === 'playlists') {
-      console.log(`   🔀 Shard Key: { usuarioId: 1, _id: 1 }`);
-      console.log(`   ↳ Dados distribuídos por USUÁRIO`);
+    try {
+      const collStats = await mongoose.connection.db.command({ collStats: coll.name });
+      console.log(`\n📁 ${coll.name}`);
+      console.log(`   Documentos: ${collStats.count || 0}`);
+      console.log(`   Tamanho: ${((collStats.size || 0) / 1024).toFixed(2)} KB`);
+      console.log(`   Índices: ${collStats.nindexes || 0}`);
+      
+      // Mostrar shard key se existir
+      if (coll.name === 'podcasts') {
+        console.log(`   🔀 Shard Key: { categoria: 1, _id: 1 }`);
+        console.log(`   ↳ Dados distribuídos por CATEGORIA`);
+      } else if (coll.name === 'musicas') {
+        console.log(`   🔀 Shard Key: { genero: 1, _id: 1 }`);
+        console.log(`   ↳ Dados distribuídos por GÊNERO`);
+      } else if (coll.name === 'playlists') {
+        console.log(`   🔀 Shard Key: { usuarioId: 1, _id: 1 }`);
+        console.log(`   ↳ Dados distribuídos por USUÁRIO`);
+      }
+    } catch (error) {
+      console.log(`\n📁 ${coll.name}`);
+      console.log(`   (Estatísticas não disponíveis)`);
     }
   }
   

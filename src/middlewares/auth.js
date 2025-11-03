@@ -19,8 +19,125 @@ const auth = async (req, res, next) => {
     // Verificar token
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
 
-    // Buscar usuário
-    const user = await User.findById(decoded.id);
+    // Converter ID para ObjectId se necessário
+    const mongoose = require('mongoose');
+    let userId = decoded.id;
+    if (!(userId instanceof mongoose.Types.ObjectId)) {
+      try {
+        userId = mongoose.Types.ObjectId.isValid(userId) 
+          ? new mongoose.Types.ObjectId(userId) 
+          : userId;
+      } catch (error) {
+        // Se não conseguir converter, usar como está
+      }
+    }
+
+    // Buscar usuário por ID primeiro no PRIMARY atual
+    let user = await User.findById(userId);
+    
+    // Se não encontrar, tentar buscar diretamente na collection do PRIMARY
+    if (!user && mongoose.connection.db) {
+      try {
+        const userData = await mongoose.connection.db.collection('users').findOne({
+          _id: userId
+        });
+        if (userData) {
+          user = new User(userData);
+          console.log(`✅ Usuário encontrado no PRIMARY por ID (collection direta)`);
+        }
+      } catch (error) {
+        // Continuar para outras tentativas
+      }
+    }
+
+    // Se não encontrar pelo ID (pode estar em outro cluster), tentar buscar de outras formas
+    if (!user) {
+      console.log(`⚠️  Usuário não encontrado por ID ${userId}, tentando buscar em outros clusters...`);
+      
+      // Tentar buscar usando a collection diretamente em todos os clusters
+      const databaseManager = require('../config/database');
+      
+      try {
+        // Tentar buscar por ID primeiro em todos os clusters
+        const clusterKeys = ['cluster1', 'cluster2', 'cluster3'];
+        for (const key of clusterKeys) {
+          const connection = databaseManager.getClusterConnection(key);
+          if (!connection || !connection.db) continue;
+          
+          try {
+            const userData = await connection.db.collection('users').findOne({
+              _id: userId
+            });
+            
+            if (userData) {
+              // Criar instância do modelo a partir dos dados
+              user = new User(userData);
+              console.log(`✅ Usuário encontrado no ${key} por ID`);
+              break;
+            }
+          } catch (error) {
+            // Continuar tentando outros clusters
+            console.error(`⚠️  Erro ao buscar no ${key} por ID:`, error.message);
+          }
+        }
+        
+        // Se ainda não encontrou e o token tem email, buscar por email
+        if (!user && decoded.email) {
+          console.log(`⚠️  Buscando por email ${decoded.email} em todos os clusters...`);
+          
+          // Primeiro tentar no PRIMARY usando o modelo
+          try {
+            const userByEmail = await User.findOne({ email: decoded.email });
+            if (userByEmail) {
+              user = userByEmail;
+              console.log(`✅ Usuário encontrado no PRIMARY por email (modelo)`);
+            }
+          } catch (error) {
+            // Continuar
+          }
+          
+          // Se não encontrou, tentar diretamente na collection do PRIMARY
+          if (!user && mongoose.connection.db) {
+            try {
+              const userData = await mongoose.connection.db.collection('users').findOne({
+                email: decoded.email
+              });
+              if (userData) {
+                user = new User(userData);
+                console.log(`✅ Usuário encontrado no PRIMARY por email (collection direta)`);
+              }
+            } catch (error) {
+              // Continuar
+            }
+          }
+          
+          // Tentar em outros clusters
+          if (!user) {
+            for (const key of clusterKeys) {
+              const connection = databaseManager.getClusterConnection(key);
+              if (!connection || !connection.db) continue;
+              
+              try {
+                const userData = await connection.db.collection('users').findOne({
+                  email: decoded.email
+                });
+                
+                if (userData) {
+                  // Criar instância do modelo a partir dos dados
+                  user = new User(userData);
+                  console.log(`✅ Usuário encontrado no ${key} por email`);
+                  break;
+                }
+              } catch (error) {
+                console.error(`⚠️  Erro ao buscar no ${key} por email:`, error.message);
+              }
+            }
+          }
+        }
+      } catch (error) {
+        console.error('⚠️  Erro ao buscar usuário em outros clusters:', error.message);
+      }
+    }
 
     if (!user || !user.account.isActive) {
       return res.status(401).json({

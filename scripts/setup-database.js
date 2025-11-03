@@ -28,49 +28,65 @@ class DatabaseSetup {
     console.log('📊 Criando índices...');
 
     try {
+      // Função auxiliar para criar índice com tratamento de erro
+      const createIndexSafe = async (collection, index, options = {}) => {
+        try {
+          await this.db.collection(collection).createIndex(index, options);
+          console.log(`   ✓ Índice criado em ${collection}: ${JSON.stringify(index)}`);
+        } catch (error) {
+          if (error.code === 85 || error.codeName === 'IndexOptionsConflict') {
+            console.log(`   ⏭️  Índice já existe em ${collection}: ${JSON.stringify(index)}`);
+          } else if (error.code === 86 || error.codeName === 'IndexKeySpecsConflict') {
+            console.log(`   ⏭️  Índice equivalente já existe em ${collection}`);
+          } else {
+            console.error(`   ❌ Erro ao criar índice em ${collection}:`, error.message);
+          }
+        }
+      };
+
       // Índices para usuários
-      await this.db.collection('users').createIndex({ email: 1 }, { unique: true });
-      await this.db.collection('users').createIndex({ nomeUsuario: 1 }, { unique: true });
-      await this.db.collection('users').createIndex({ createdAt: -1 });
-      await this.db.collection('users').createIndex({ 'account.subscription': 1 });
+      await createIndexSafe('users', { email: 1 }, { unique: true });
+      await createIndexSafe('users', { nomeUsuario: 1 }, { unique: true });
+      await createIndexSafe('users', { createdAt: -1 });
+      await createIndexSafe('users', { 'account.subscription': 1 });
 
       // Índices para podcasts
-      await this.db.collection('podcasts').createIndex({ titulo: 'text', descricao: 'text' });
-      await this.db.collection('podcasts').createIndex({ autor: 1 });
-      await this.db.collection('podcasts').createIndex({ ano: -1 });
-      await this.db.collection('podcasts').createIndex({ categoria: 1 });
-      await this.db.collection('podcasts').createIndex({ tags: 1 });
-      await this.db.collection('podcasts').createIndex({ 'avaliacoes.media': -1 });
-      await this.db.collection('podcasts').createIndex({ 'stats.reproducoes': -1 });
-      await this.db.collection('podcasts').createIndex({ status: 1 });
+      await createIndexSafe('podcasts', { titulo: 'text', descricao: 'text' });
+      await createIndexSafe('podcasts', { autor: 1 });
+      await createIndexSafe('podcasts', { ano: -1 });
+      await createIndexSafe('podcasts', { categoria: 1 });
+      await createIndexSafe('podcasts', { tags: 1 });
+      await createIndexSafe('podcasts', { 'avaliacoes.media': -1 });
+      await createIndexSafe('podcasts', { 'stats.reproducoes': -1 });
+      await createIndexSafe('podcasts', { status: 1 });
 
       // Índices para músicas
-      await this.db.collection('musicas').createIndex({ titulo: 'text', autor: 'text' });
-      await this.db.collection('musicas').createIndex({ autor: 1 });
-      await this.db.collection('musicas').createIndex({ ano: -1 });
-      await this.db.collection('musicas').createIndex({ genero: 1 });
-      await this.db.collection('musicas').createIndex({ album: 1 });
-      await this.db.collection('musicas').createIndex({ tags: 1 });
-      await this.db.collection('musicas').createIndex({ 'stats.reproducoes': -1 });
-      await this.db.collection('musicas').createIndex({ 'stats.favoritos': -1 });
-      await this.db.collection('musicas').createIndex({ status: 1 });
+      await createIndexSafe('musicas', { titulo: 'text', autor: 'text' });
+      await createIndexSafe('musicas', { autor: 1 });
+      await createIndexSafe('musicas', { ano: -1 });
+      await createIndexSafe('musicas', { genero: 1 });
+      await createIndexSafe('musicas', { album: 1 });
+      await createIndexSafe('musicas', { tags: 1 });
+      await createIndexSafe('musicas', { 'stats.reproducoes': -1 });
+      await createIndexSafe('musicas', { 'stats.favoritos': -1 });
+      await createIndexSafe('musicas', { status: 1 });
 
       // Índices para playlists
-      await this.db.collection('playlists').createIndex({ nomePlaylist: 'text', descricao: 'text' });
-      await this.db.collection('playlists').createIndex({ usuarioId: 1 });
-      await this.db.collection('playlists').createIndex({ visibilidade: 1 });
-      await this.db.collection('playlists').createIndex({ 'stats.seguidores': -1 });
-      await this.db.collection('playlists').createIndex({ tags: 1 });
-      await this.db.collection('playlists').createIndex({ createdAt: -1 });
+      await createIndexSafe('playlists', { nomePlaylist: 'text', descricao: 'text' });
+      await createIndexSafe('playlists', { usuarioId: 1 });
+      await createIndexSafe('playlists', { visibilidade: 1 });
+      await createIndexSafe('playlists', { 'stats.seguidores': -1 });
+      await createIndexSafe('playlists', { tags: 1 });
+      await createIndexSafe('playlists', { createdAt: -1 });
 
       // Índices para assinaturas
-      await this.db.collection('assinaturas').createIndex({ usuarioId: 1 }, { unique: true });
-      await this.db.collection('assinaturas').createIndex({ tipo: 1 });
-      await this.db.collection('assinaturas').createIndex({ plano: 1 });
-      await this.db.collection('assinaturas').createIndex({ status: 1 });
-      await this.db.collection('assinaturas').createIndex({ dataFim: 1 });
+      await createIndexSafe('assinaturas', { usuarioId: 1 }, { unique: true });
+      await createIndexSafe('assinaturas', { tipo: 1 });
+      await createIndexSafe('assinaturas', { plano: 1 });
+      await createIndexSafe('assinaturas', { status: 1 });
+      await createIndexSafe('assinaturas', { dataFim: 1 });
 
-      console.log('✅ Índices criados com sucesso');
+      console.log('✅ Índices verificados/criados com sucesso');
     } catch (error) {
       console.error('❌ Erro ao criar índices:', error);
     }
@@ -106,7 +122,13 @@ class DatabaseSetup {
 
       console.log('✅ Sharding configurado com sucesso');
     } catch (error) {
-      console.error('❌ Erro ao configurar sharding:', error);
+      if (error.code === 8000 || error.codeName === 'AtlasError') {
+        console.log('⚠️  Sharding não disponível no MongoDB Atlas Free Tier');
+        console.log('   Para habilitar sharding, você precisa de um cluster Atlas configurado especificamente para sharding');
+        console.log('   Isso não afeta o funcionamento normal da aplicação');
+      } else {
+        console.error('❌ Erro ao configurar sharding:', error.message);
+      }
     }
   }
 

@@ -1,16 +1,112 @@
 const jwt = require('jsonwebtoken');
 const User = require('../models/User');
 const Assinatura = require('../models/Assinatura');
+const databaseManager = require('../config/database');
+const mongoose = require('mongoose');
 
 /**
  * Gerar token JWT
  */
-const generateToken = (userId) => {
+const generateToken = (userId, email = null) => {
+  const payload = { id: userId };
+  // Incluir email no token para facilitar busca em múltiplos clusters
+  if (email) {
+    payload.email = email;
+  }
   return jwt.sign(
-    { id: userId },
+    payload,
     process.env.JWT_SECRET,
     { expiresIn: process.env.JWT_EXPIRES_IN || '7d' }
   );
+};
+
+/**
+ * Função helper para buscar usuário de forma otimizada em múltiplos clusters
+ * Tenta buscar por ID primeiro, depois por email se disponível
+ */
+const findUserOptimized = async (userId, email = null) => {
+  // Tentar buscar por ID primeiro no PRIMARY
+  let user = await User.findById(userId);
+  
+  // Se não encontrar, tentar diretamente na collection do PRIMARY
+  if (!user && mongoose.connection.db) {
+    try {
+      const userData = await mongoose.connection.db.collection('users').findOne({
+        _id: userId
+      });
+      if (userData) {
+        user = new User(userData);
+      }
+    } catch (error) {
+      // Continuar para outras tentativas
+    }
+  }
+  
+  // Se ainda não encontrou e temos email, buscar por email
+  if (!user && email) {
+    try {
+      // Tentar no PRIMARY usando o modelo
+      user = await User.findOne({ email: email });
+      
+      // Se não encontrou, tentar diretamente na collection do PRIMARY
+      if (!user && mongoose.connection.db) {
+        const userData = await mongoose.connection.db.collection('users').findOne({
+          email: email
+        });
+        if (userData) {
+          user = new User(userData);
+        }
+      }
+      
+      // Se ainda não encontrou, tentar em outros clusters
+      if (!user) {
+        const clusterKeys = ['cluster1', 'cluster2', 'cluster3'];
+        for (const key of clusterKeys) {
+          const connection = databaseManager.getClusterConnection(key);
+          if (!connection || !connection.db) continue;
+          
+          try {
+            const userData = await connection.db.collection('users').findOne({
+              email: email
+            });
+            
+            if (userData) {
+              user = new User(userData);
+              break;
+            }
+          } catch (error) {
+            // Continuar tentando outros clusters
+          }
+        }
+      }
+    } catch (error) {
+      console.error('⚠️  Erro ao buscar usuário por email:', error.message);
+    }
+  }
+  
+  // Se ainda não encontrou por email, tentar buscar por ID em outros clusters
+  if (!user) {
+    const clusterKeys = ['cluster1', 'cluster2', 'cluster3'];
+    for (const key of clusterKeys) {
+      const connection = databaseManager.getClusterConnection(key);
+      if (!connection || !connection.db) continue;
+      
+      try {
+        const userData = await connection.db.collection('users').findOne({
+          _id: userId
+        });
+        
+        if (userData) {
+          user = new User(userData);
+          break;
+        }
+      } catch (error) {
+        // Continuar tentando outros clusters
+      }
+    }
+  }
+  
+  return user;
 };
 
 /**
@@ -36,7 +132,7 @@ const register = async (req, res) => {
       });
     }
 
-    // Criar usuário
+    // Criar usuário no PRIMARY
     const user = new User({
       nomeUsuario,
       email,
@@ -49,7 +145,25 @@ const register = async (req, res) => {
 
     await user.save();
 
-    // Criar assinatura free automática
+    // Replicar usuário em todos os clusters
+    try {
+      const userData = user.toObject();
+      // Garantir que o _id seja preservado como ObjectId para manter o mesmo ID em todos os clusters
+      const mongoose = require('mongoose');
+      if (userData._id) {
+        // Converter para ObjectId se não for já
+        userData._id = userData._id instanceof mongoose.Types.ObjectId 
+          ? userData._id 
+          : new mongoose.Types.ObjectId(userData._id.toString());
+      }
+      await databaseManager.writeToAllClusters('users', 'insertOne', userData);
+      console.log('✅ Usuário replicado em todos os clusters');
+    } catch (error) {
+      console.error('⚠️  Erro ao replicar usuário:', error.message);
+      // Continuar mesmo se a replicação falhar (usuário já foi criado no PRIMARY)
+    }
+
+    // Criar assinatura free automática no PRIMARY
     const dataInicio = new Date();
     const dataFim = new Date();
     dataFim.setFullYear(dataFim.getFullYear() + 10); // 10 anos para plano free
@@ -68,8 +182,29 @@ const register = async (req, res) => {
 
     await assinatura.save();
 
-    // Gerar token
-    const token = generateToken(user._id);
+    // Replicar assinatura em todos os clusters
+    try {
+      const assinaturaData = assinatura.toObject();
+      const mongoose = require('mongoose');
+      // Garantir que _id e usuarioId sejam preservados como ObjectId
+      if (assinaturaData._id) {
+        assinaturaData._id = assinaturaData._id instanceof mongoose.Types.ObjectId 
+          ? assinaturaData._id 
+          : new mongoose.Types.ObjectId(assinaturaData._id.toString());
+      }
+      if (assinaturaData.usuarioId) {
+        assinaturaData.usuarioId = assinaturaData.usuarioId instanceof mongoose.Types.ObjectId 
+          ? assinaturaData.usuarioId 
+          : new mongoose.Types.ObjectId(assinaturaData.usuarioId.toString());
+      }
+      await databaseManager.writeToAllClusters('assinaturas', 'insertOne', assinaturaData);
+      console.log('✅ Assinatura replicada em todos os clusters');
+    } catch (error) {
+      console.error('⚠️  Erro ao replicar assinatura:', error.message);
+    }
+
+    // Gerar token (incluindo email para facilitar busca em múltiplos clusters)
+    const token = generateToken(user._id, user.email);
 
     // Remover senha do objeto de retorno
     const userResponse = user.toObject();
@@ -102,13 +237,39 @@ const login = async (req, res) => {
   try {
     const { emailOrUsername, senha } = req.body;
 
-    // Buscar usuário por email ou nome de usuário
-    const user = await User.findOne({
+    // Buscar usuário por email ou nome de usuário no PRIMARY atual
+    let user = await User.findOne({
       $or: [
         { email: emailOrUsername },
         { nomeUsuario: emailOrUsername }
       ]
     }).select('+senha');
+
+    // Se não encontrar no PRIMARY, tentar buscar em outros clusters
+    if (!user) {
+      console.log('⚠️  Usuário não encontrado no PRIMARY, tentando outros clusters...');
+      try {
+        // Tentar buscar diretamente na collection usando databaseManager
+        const userData = await databaseManager.readFromCluster(
+          'users',
+          'findOne',
+          {
+            $or: [
+              { email: emailOrUsername },
+              { nomeUsuario: emailOrUsername }
+            ]
+          }
+        );
+        
+        if (userData) {
+          // Criar instância do modelo User a partir dos dados encontrados
+          user = new User(userData);
+          await user.isModified('senha'); // Garantir que métodos do modelo funcionem
+        }
+      } catch (error) {
+        console.error('⚠️  Erro ao buscar em outros clusters:', error.message);
+      }
+    }
 
     if (!user) {
       return res.status(401).json({
@@ -136,11 +297,36 @@ const login = async (req, res) => {
     }
 
     // Atualizar último login
-    user.stats.lastLoginAt = new Date();
-    await user.save();
+    const lastLoginAt = new Date();
+    
+    // Atualizar diretamente usando updateOne para evitar problemas com _id
+    try {
+      await User.updateOne(
+        { _id: user._id },
+        { $set: { 'stats.lastLoginAt': lastLoginAt } }
+      );
+    } catch (error) {
+      console.error('⚠️  Erro ao atualizar último login:', error.message);
+      // Continuar mesmo se falhar
+    }
 
-    // Gerar token
-    const token = generateToken(user._id);
+    // Replicar atualização em todos os clusters usando email (mais confiável que _id)
+    try {
+      await databaseManager.writeToAllClusters(
+        'users',
+        'updateOne',
+        { email: user.email }, // Usar email ao invés de _id
+        { $set: { 'stats.lastLoginAt': lastLoginAt } }
+      );
+    } catch (error) {
+      console.error('⚠️  Erro ao replicar atualização de login:', error.message);
+    }
+    
+    // Atualizar objeto user para resposta
+    user.stats.lastLoginAt = lastLoginAt;
+
+    // Gerar token (incluindo email para facilitar busca em múltiplos clusters)
+    const token = generateToken(user._id, user.email);
 
     // Remover senha do objeto de retorno
     const userResponse = user.toObject();
@@ -171,12 +357,37 @@ const login = async (req, res) => {
  */
 const getMe = async (req, res) => {
   try {
-    const user = await User.findById(req.user._id);
+    // Extrair email do token se disponível para busca otimizada
+    let email = null;
+    try {
+      const token = req.header('Authorization')?.replace('Bearer ', '');
+      if (token) {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        email = decoded.email || null;
+      }
+    } catch (error) {
+      // Token pode não ter email se for antigo, usar email do req.user
+      email = req.user?.email || null;
+    }
+    
+    // Buscar usuário de forma otimizada para garantir dados atualizados
+    const user = await findUserOptimized(req.user._id, email || req.user?.email);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado'
+      });
+    }
+
+    // Converter para objeto e remover senha se presente
+    const userResponse = user.toObject ? user.toObject() : user;
+    delete userResponse.senha;
 
     res.json({
       success: true,
       data: {
-        user
+        user: userResponse
       }
     });
   } catch (error) {
@@ -197,7 +408,29 @@ const getMe = async (req, res) => {
 const updateProfile = async (req, res) => {
   try {
     const updates = req.body;
-    const user = await User.findById(req.user._id);
+    
+    // Extrair email do token se disponível para busca otimizada
+    let email = null;
+    try {
+      const token = req.header('Authorization')?.replace('Bearer ', '');
+      if (token) {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        email = decoded.email || null;
+      }
+    } catch (error) {
+      // Token pode não ter email se for antigo, usar email do req.user
+      email = req.user.email || null;
+    }
+    
+    // Buscar usuário de forma otimizada
+    const user = await findUserOptimized(req.user._id, email || req.user.email);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado'
+      });
+    }
 
     // Atualizar campos do perfil
     if (updates.firstName) user.profile.firstName = updates.firstName;
@@ -209,6 +442,28 @@ const updateProfile = async (req, res) => {
     if (updates.socialLinks) user.profile.socialLinks = updates.socialLinks;
 
     await user.save();
+    
+    // Replicar atualização em todos os clusters usando email (mais confiável)
+    try {
+      await databaseManager.writeToAllClusters(
+        'users',
+        'updateOne',
+        { email: user.email },
+        { 
+          $set: {
+            'profile.firstName': user.profile.firstName,
+            'profile.lastName': user.profile.lastName,
+            'profile.bio': user.profile.bio,
+            'profile.birthDate': user.profile.birthDate,
+            'profile.location': user.profile.location,
+            'profile.website': user.profile.website,
+            'profile.socialLinks': user.profile.socialLinks
+          }
+        }
+      );
+    } catch (error) {
+      console.error('⚠️  Erro ao replicar atualização de perfil:', error.message);
+    }
 
     res.json({
       success: true,
@@ -235,7 +490,45 @@ const updateProfile = async (req, res) => {
 const changePassword = async (req, res) => {
   try {
     const { senhaAtual, senhaNova } = req.body;
-    const user = await User.findById(req.user._id).select('+senha');
+    
+    // Extrair email do token se disponível para busca otimizada
+    let email = null;
+    try {
+      const token = req.header('Authorization')?.replace('Bearer ', '');
+      if (token) {
+        const decoded = jwt.verify(token, process.env.JWT_SECRET);
+        email = decoded.email || null;
+      }
+    } catch (error) {
+      // Token pode não ter email se for antigo, usar email do req.user
+      email = req.user.email || null;
+    }
+    
+    // Buscar usuário de forma otimizada com senha
+    let user = await findUserOptimized(req.user._id, email || req.user.email);
+    
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado'
+      });
+    }
+    
+    // Se o usuário não tem senha carregada, buscar novamente com select
+    if (!user.senha) {
+      user = await User.findOne({ _id: user._id }).select('+senha');
+      if (!user) {
+        // Se ainda não encontrou, tentar por email
+        user = await User.findOne({ email: email || req.user.email }).select('+senha');
+      }
+    }
+
+    if (!user) {
+      return res.status(404).json({
+        success: false,
+        message: 'Usuário não encontrado'
+      });
+    }
 
     // Verificar senha atual
     const isPasswordValid = await user.comparePassword(senhaAtual);
@@ -250,6 +543,21 @@ const changePassword = async (req, res) => {
     // Atualizar senha
     user.senha = senhaNova;
     await user.save();
+    
+    // Replicar atualização de senha em todos os clusters usando email
+    try {
+      // Nota: Para senha, precisamos buscar a senha hasheada do usuário atual
+      // Replicar usando updateOne com a senha já hasheada
+      const hashedPassword = user.senha; // Mongoose já fez o hash no save()
+      await databaseManager.writeToAllClusters(
+        'users',
+        'updateOne',
+        { email: user.email },
+        { $set: { senha: hashedPassword } }
+      );
+    } catch (error) {
+      console.error('⚠️  Erro ao replicar atualização de senha:', error.message);
+    }
 
     res.json({
       success: true,

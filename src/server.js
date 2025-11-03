@@ -125,16 +125,10 @@ class Server {
    */
   async connectDatabase() {
     try {
-      await databaseManager.connectMain();
-      console.log('✅ Banco de dados conectado');
-      
-      // Conectar aos shards (opcional)
-      if (process.env.MONGODB_SHARD_URI_1) {
-        await databaseManager.connectShards();
-        console.log('✅ Shards conectados');
-      }
+      await databaseManager.connectAllClusters();
+      console.log('✅ Todos os clusters conectados');
     } catch (error) {
-      console.error('❌ Erro ao conectar ao banco de dados:', error);
+      console.error('❌ Erro ao conectar aos clusters:', error);
       process.exit(1);
     }
   }
