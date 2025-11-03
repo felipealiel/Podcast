@@ -68,6 +68,19 @@ class DatabaseManager {
         continue;
       }
 
+     /*   // ⚠️ TESTE: Desabilitar PRIMARY propositalmente para testar failover
+      // REMOVA ESTE BLOCO para voltar ao funcionamento normal
+      if (config.key === 'cluster1') {
+        console.log(`🚫 ${config.name}: CONEXÃO DESABILITADA PARA TESTE DE FAILOVER`);
+        this.clusterStatus[config.key] = {
+          status: 'disconnected',
+          role: 'PRIMARY',
+          lastCheck: new Date(),
+          reason: 'Desabilitado para teste'
+        };
+        continue; // Pula a conexão do PRIMARY
+      }
+*/
       try {
         let connection;
         
