@@ -39,7 +39,15 @@ const registerSchema = Joi.object({
 
   lastName: Joi.string()
     .max(50)
+    .optional(),
+
+  role: Joi.string()
+    .valid('user', 'producer')
     .optional()
+    .default('user')
+    .messages({
+      'any.only': 'Role deve ser "user" ou "producer"'
+    })
 });
 
 /**
@@ -56,8 +64,15 @@ const loginSchema = Joi.object({
     .required()
     .messages({
       'any.required': 'Senha é obrigatória'
+    }),
+
+  tipoLogin: Joi.string()
+    .valid('user', 'producer')
+    .optional()
+    .messages({
+      'any.only': 'Tipo de login deve ser "user" ou "producer"'
     })
-});
+}).unknown(true); // Permitir campos desconhecidos (como tipoLogin usado pelo frontend)
 
 /**
  * Validação de atualização de perfil

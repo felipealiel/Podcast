@@ -23,13 +23,31 @@ async function loadUserData() {
             const data = await response.json();
             const user = data.data.user;
 
+            const userRole = user.account?.role || 'user';
+            const roleDisplay = userRole === 'producer' ? '🎤 Produtor' : 
+                               userRole === 'admin' ? '👑 Administrador' : 
+                               '🎵 Ouvinte';
+            
+            let producerButton = '';
+            if (userRole === 'producer' || userRole === 'admin') {
+                producerButton = `
+                    <div style="margin-top: 20px; padding-top: 20px; border-top: 1px solid #333;">
+                        <a href="/produtor.html" class="btn-primary" style="display: inline-block; text-decoration: none; text-align: center;">
+                            🎤 Acessar Área do Produtor
+                        </a>
+                    </div>
+                `;
+            }
+
             document.getElementById('userInfo').innerHTML = `
                 <h2>Informações da Conta</h2>
                 <p><strong>Nome de Usuário:</strong> ${user.nomeUsuario}</p>
                 <p><strong>Email:</strong> ${user.email}</p>
                 <p><strong>Nome:</strong> ${user.fullName || 'Não informado'}</p>
+                <p><strong>Perfil:</strong> ${roleDisplay}</p>
                 <p><strong>Plano:</strong> ${user.account.subscription.toUpperCase()}</p>
                 <p><strong>Membro desde:</strong> ${new Date(user.createdAt).toLocaleDateString('pt-BR')}</p>
+                ${producerButton}
             `;
         } else {
             // Token inválido

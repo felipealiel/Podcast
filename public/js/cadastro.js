@@ -38,12 +38,14 @@ registerForm.addEventListener('submit', async (e) => {
     clearMessages();
 
     // Dados do formulário
+    const tipoConta = document.querySelector('input[name="tipoConta"]:checked').value;
     const formData = {
         email: document.getElementById('email').value.trim(),
         nomeUsuario: document.getElementById('nomeUsuario').value.trim(),
         senha: document.getElementById('senha').value,
         firstName: document.getElementById('firstName').value.trim(),
-        lastName: document.getElementById('lastName').value.trim()
+        lastName: document.getElementById('lastName').value.trim(),
+        role: tipoConta // 'user' ou 'producer'
     };
 
     // Validação básica
@@ -86,16 +88,29 @@ registerForm.addEventListener('submit', async (e) => {
     btnSubmit.textContent = 'Cadastrando...';
 
     try {
+        // Criar AbortController para timeout
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 segundos timeout
+
         // Fazer requisição para a API
         const response = await fetch(`${API_URL}/auth/register`, {
             method: 'POST',
             headers: {
                 'Content-Type': 'application/json'
             },
-            body: JSON.stringify(formData)
+            body: JSON.stringify(formData),
+            signal: controller.signal
         });
 
-        const data = await response.json();
+        clearTimeout(timeoutId);
+
+        // Verificar se a resposta está ok antes de tentar parsear JSON
+        let data;
+        try {
+            data = await response.json();
+        } catch (jsonError) {
+            throw new Error('Resposta inválida do servidor');
+        }
 
         if (response.ok && data.success) {
             // Mostrar mensagem de sucesso
@@ -104,10 +119,16 @@ registerForm.addEventListener('submit', async (e) => {
             // Salvar token no localStorage
             localStorage.setItem('token', data.data.token);
             localStorage.setItem('user', JSON.stringify(data.data.user));
+            localStorage.setItem('preferredLoginType', tipoConta);
 
-            // Redirecionar para a home após 2 segundos
+            // Redirecionar baseado no tipo de conta
+            const userRole = data.data.user?.account?.role || 'user';
             setTimeout(() => {
-                window.location.href = '/home.html';
+                if (tipoConta === 'producer' && (userRole === 'producer' || userRole === 'admin')) {
+                    window.location.href = '/produtor.html';
+                } else {
+                    window.location.href = '/home.html';
+                }
             }, 2000);
         } else {
             // Mostrar erro
@@ -121,7 +142,13 @@ registerForm.addEventListener('submit', async (e) => {
         }
     } catch (error) {
         console.error('Erro ao cadastrar:', error);
-        showError('Erro de conexão. Verifique sua internet e tente novamente.');
+        if (error.name === 'AbortError') {
+            showError('Tempo de espera esgotado. O servidor pode estar ocupado. Tente novamente.');
+        } else if (error.message) {
+            showError(error.message);
+        } else {
+            showError('Erro de conexão. Verifique sua internet e tente novamente.');
+        }
     } finally {
         // Remover loading state
         btnSubmit.disabled = false;

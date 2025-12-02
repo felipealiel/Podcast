@@ -30,7 +30,8 @@ loginForm.addEventListener('submit', async (e) => {
     // Dados do formulário
     const formData = {
         emailOrUsername: document.getElementById('emailOrUsername').value.trim(),
-        senha: document.getElementById('senha').value
+        senha: document.getElementById('senha').value,
+        tipoLogin: document.querySelector('input[name="tipoLogin"]:checked').value
     };
 
     // Validação básica
@@ -62,8 +63,27 @@ loginForm.addEventListener('submit', async (e) => {
             localStorage.setItem('token', data.data.token);
             localStorage.setItem('user', JSON.stringify(data.data.user));
 
-            // Redirecionar para a home
-            window.location.href = '/home.html';
+            // Verificar tipo de login escolhido e role do usuário
+            const tipoLogin = document.querySelector('input[name="tipoLogin"]:checked').value;
+            const userRole = data.data.user?.account?.role || 'user';
+            
+            // Verificar se o usuário tem permissão para o tipo escolhido
+            if (tipoLogin === 'producer' && userRole !== 'producer' && userRole !== 'admin') {
+                showError('Você não tem permissão de produtor. Faça login como ouvinte ou solicite acesso de produtor.');
+                return;
+            }
+
+            // Salvar preferência de login
+            localStorage.setItem('preferredLoginType', tipoLogin);
+
+            // Redirecionar baseado no tipo
+            if (tipoLogin === 'producer' && (userRole === 'producer' || userRole === 'admin')) {
+                // Produtor vai para área do produtor
+                window.location.href = '/produtor.html';
+            } else {
+                // Ouvinte vai para home normal
+                window.location.href = '/home.html';
+            }
         } else {
             // Mostrar erro
             showError(data.message || 'Erro ao fazer login. Tente novamente.');
@@ -92,8 +112,23 @@ window.addEventListener('DOMContentLoaded', () => {
         })
         .then(response => {
             if (response.ok) {
-                // Token válido, redirecionar para home
-                window.location.href = '/home.html';
+                // Token válido, verificar role e redirecionar
+                response.json().then(data => {
+                    const userRole = data.data?.user?.account?.role || 'user';
+                    // Se for produtor/admin, pode ir para área do produtor
+                    // Caso contrário, vai para home
+                    if (userRole === 'producer' || userRole === 'admin') {
+                        // Verificar se há parâmetro na URL ou preferência salva
+                        const savedPref = localStorage.getItem('preferredLoginType');
+                        if (savedPref === 'producer') {
+                            window.location.href = '/produtor.html';
+                        } else {
+                            window.location.href = '/home.html';
+                        }
+                    } else {
+                        window.location.href = '/home.html';
+                    }
+                });
             } else {
                 // Token inválido, limpar localStorage
                 localStorage.removeItem('token');
@@ -110,12 +145,21 @@ window.addEventListener('DOMContentLoaded', () => {
 const rememberMeCheckbox = document.getElementById('rememberMe');
 const emailOrUsernameInput = document.getElementById('emailOrUsername');
 
-// Carregar email salvo se existir
+// Carregar email salvo e preferência de login se existir
 window.addEventListener('DOMContentLoaded', () => {
     const savedEmail = localStorage.getItem('rememberedEmail');
     if (savedEmail) {
         emailOrUsernameInput.value = savedEmail;
         rememberMeCheckbox.checked = true;
+    }
+    
+    // Carregar preferência de tipo de login
+    const savedLoginType = localStorage.getItem('preferredLoginType');
+    if (savedLoginType) {
+        const radio = document.querySelector(`input[name="tipoLogin"][value="${savedLoginType}"]`);
+        if (radio) {
+            radio.checked = true;
+        }
     }
 });
 

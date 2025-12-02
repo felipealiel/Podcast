@@ -70,6 +70,11 @@ const userSchema = new mongoose.Schema({
   
   // Configurações de conta
   account: {
+    role: {
+      type: String,
+      enum: ['user', 'producer', 'admin'],
+      default: 'user'
+    },
     isVerified: {
       type: Boolean,
       default: false

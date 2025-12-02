@@ -8,6 +8,8 @@
     "dev": "nodemon src/server.js",
     "setup-db": "node scripts/setup-database.js",
     "create-shards": "node scripts/create-shards.js",
+    "promover-produtor": "node scripts/promover-produtor.js",
+    "test-connection": "node scripts/test-connection.js",
     "test": "jest"
   },
   "keywords": [

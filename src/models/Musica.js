@@ -80,6 +80,33 @@ const musicaSchema = new mongoose.Schema({
     },
     sampleRate: {
       type: Number // em Hz
+    },
+    // RF08 - Múltiplas resoluções/qualidades
+    versoes: {
+      high: {
+        path: String,
+        url: String,
+        bitrate: String,
+        sampleRate: Number,
+        size: Number,
+        format: String
+      },
+      medium: {
+        path: String,
+        url: String,
+        bitrate: String,
+        sampleRate: Number,
+        size: Number,
+        format: String
+      },
+      low: {
+        path: String,
+        url: String,
+        bitrate: String,
+        sampleRate: Number,
+        size: Number,
+        format: String
+      }
     }
   },
   

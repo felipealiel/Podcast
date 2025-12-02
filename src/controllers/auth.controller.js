@@ -116,12 +116,49 @@ const findUserOptimized = async (userId, email = null) => {
  */
 const register = async (req, res) => {
   try {
-    const { nomeUsuario, email, senha, firstName, lastName } = req.body;
+    console.log('📝 Iniciando registro de usuário...');
+    const { nomeUsuario, email, senha, firstName, lastName, role } = req.body;
+    
+    // Validar dados básicos
+    if (!email || !nomeUsuario || !senha) {
+      return res.status(400).json({
+        success: false,
+        message: 'Email, nome de usuário e senha são obrigatórios'
+      });
+    }
 
-    // Verificar se usuário já existe
-    const userExists = await User.findOne({
-      $or: [{ email }, { nomeUsuario }]
-    });
+    // Verificar se usuário já existe (verificar em todos os clusters disponíveis)
+    console.log('🔍 Verificando se usuário já existe em todos os clusters...');
+    let userExists = null;
+    
+    // Tentar primeiro no PRIMARY usando o modelo mongoose
+    try {
+      userExists = await User.findOne({
+        $or: [{ email }, { nomeUsuario }]
+      });
+    } catch (error) {
+      console.log('⚠️  Erro ao verificar no PRIMARY, tentando outros clusters...');
+    }
+    
+    // Se não encontrou no PRIMARY, tentar em outros clusters
+    if (!userExists) {
+      try {
+        userExists = await databaseManager.readFromCluster(
+          'users',
+          'findOne',
+          {
+            $or: [{ email }, { nomeUsuario }]
+          }
+        );
+        if (userExists) {
+          userExists = new User(userExists);
+        }
+      } catch (error) {
+        console.log('⚠️  Erro ao verificar em outros clusters:', error.message);
+      }
+    }
+    
+    console.log(userExists ? '⚠️  Usuário já existe' : '✅ Email/username disponível');
 
     if (userExists) {
       return res.status(400).json({
@@ -132,7 +169,11 @@ const register = async (req, res) => {
       });
     }
 
+    // Validar role (só aceita 'user' ou 'producer', default é 'user')
+    const userRole = (role === 'producer') ? 'producer' : 'user';
+
     // Criar usuário no PRIMARY
+    console.log('👤 Criando novo usuário...');
     const user = new User({
       nomeUsuario,
       email,
@@ -140,30 +181,92 @@ const register = async (req, res) => {
       profile: {
         firstName,
         lastName
+      },
+      account: {
+        role: userRole
       }
     });
 
-    await user.save();
-
-    // Replicar usuário em todos os clusters
+    // Salvar usuário usando writeWithFallback (tenta PRIMARY, se falhar tenta outros clusters)
+    console.log('💾 Salvando usuário no banco com failover automático...');
+    let userData;
+    let clusterUsed = null;
+    
     try {
-      const userData = user.toObject();
-      // Garantir que o _id seja preservado como ObjectId para manter o mesmo ID em todos os clusters
-      const mongoose = require('mongoose');
-      if (userData._id) {
-        // Converter para ObjectId se não for já
-        userData._id = userData._id instanceof mongoose.Types.ObjectId 
-          ? userData._id 
-          : new mongoose.Types.ObjectId(userData._id.toString());
+      // Tentar salvar no PRIMARY usando mongoose (método padrão)
+      const primaryConnection = databaseManager.getPrimaryConnection();
+      const primaryStatus = databaseManager.getConnectionStatus().clusters[databaseManager.primaryCluster];
+      
+      if (primaryConnection && primaryStatus?.status === 'connected' && primaryConnection.db) {
+        try {
+          await user.save();
+          console.log('✅ Usuário salvo no PRIMARY');
+          userData = user.toObject();
+          clusterUsed = databaseManager.primaryCluster;
+        } catch (primaryError) {
+          console.log('⚠️  Erro ao salvar no PRIMARY, usando fallback...');
+          throw primaryError; // Forçar fallback
+        }
+      } else {
+        throw new Error('PRIMARY não disponível');
       }
-      await databaseManager.writeToAllClusters('users', 'insertOne', userData);
-      console.log('✅ Usuário replicado em todos os clusters');
     } catch (error) {
-      console.error('⚠️  Erro ao replicar usuário:', error.message);
-      // Continuar mesmo se a replicação falhar (usuário já foi criado no PRIMARY)
+      console.log('🔄 PRIMARY não disponível, tentando salvar em outro cluster...');
+      
+      // Se falhou no PRIMARY, usar writeWithFallback
+      try {
+        userData = user.toObject();
+        // Garantir que o _id seja preservado como ObjectId
+        if (userData._id) {
+          userData._id = userData._id instanceof mongoose.Types.ObjectId 
+            ? userData._id 
+            : new mongoose.Types.ObjectId(userData._id.toString());
+        }
+        
+        const writeResult = await databaseManager.writeWithFallback('users', 'insertOne', userData);
+        clusterUsed = writeResult.clusterUsed;
+        console.log(`✅ Usuário salvo no cluster de fallback: ${clusterUsed}`);
+        
+        // Criar instância do User a partir dos dados salvos
+        user = new User(userData);
+      } catch (fallbackError) {
+        console.error('❌ Erro ao salvar usuário em qualquer cluster:', fallbackError.message);
+        return res.status(500).json({
+          success: false,
+          message: 'Erro ao criar usuário. Nenhum cluster disponível.',
+          error: process.env.NODE_ENV === 'development' ? fallbackError.message : undefined
+        });
+      }
+    }
+    
+    // Se salvou em um cluster diferente do PRIMARY, também replicar nos outros (exceto o usado)
+    if (clusterUsed && clusterUsed !== databaseManager.primaryCluster) {
+      console.log('🔄 Replicando usuário nos outros clusters...');
+      try {
+        await databaseManager.writeToAllClusters('users', 'insertOne', userData, `skip:${clusterUsed}`);
+        console.log('✅ Usuário replicado nos outros clusters');
+      } catch (error) {
+        console.error('⚠️  Erro ao replicar usuário:', error.message);
+        // Continuar mesmo se a replicação falhar
+      }
+    } else if (clusterUsed === databaseManager.primaryCluster) {
+      // Se salvou no PRIMARY, replicar nos SECONDARYs
+      console.log('🔄 Replicando usuário nos SECONDARYs...');
+      try {
+        // Garantir que userData tenha todos os campos necessários
+        if (!userData) {
+          userData = user.toObject();
+        }
+        await databaseManager.writeToAllClusters('users', 'insertOne', userData, `skip:${clusterUsed}`);
+        console.log('✅ Usuário replicado nos SECONDARYs');
+      } catch (error) {
+        console.error('⚠️  Erro ao replicar usuário:', error.message);
+        // Continuar mesmo se a replicação falhar
+      }
     }
 
     // Criar assinatura free automática no PRIMARY
+    console.log('📋 Criando assinatura free...');
     const dataInicio = new Date();
     const dataFim = new Date();
     dataFim.setFullYear(dataFim.getFullYear() + 10); // 10 anos para plano free
@@ -180,36 +283,82 @@ const register = async (req, res) => {
       }
     });
 
-    await assinatura.save();
-
-    // Replicar assinatura em todos os clusters
+    // Criar assinatura usando writeWithFallback
+    console.log('💾 Salvando assinatura com failover automático...');
+    let assinaturaData;
+    let assinaturaClusterUsed = null;
+    
     try {
-      const assinaturaData = assinatura.toObject();
-      const mongoose = require('mongoose');
-      // Garantir que _id e usuarioId sejam preservados como ObjectId
-      if (assinaturaData._id) {
-        assinaturaData._id = assinaturaData._id instanceof mongoose.Types.ObjectId 
-          ? assinaturaData._id 
-          : new mongoose.Types.ObjectId(assinaturaData._id.toString());
+      // Tentar salvar no PRIMARY usando mongoose
+      const primaryConnection = databaseManager.getPrimaryConnection();
+      const primaryStatus = databaseManager.getConnectionStatus().clusters[databaseManager.primaryCluster];
+      
+      if (primaryConnection && primaryStatus?.status === 'connected' && primaryConnection.db) {
+        try {
+          await assinatura.save();
+          console.log('✅ Assinatura salva no PRIMARY');
+          assinaturaData = assinatura.toObject();
+          assinaturaClusterUsed = databaseManager.primaryCluster;
+        } catch (primaryError) {
+          console.log('⚠️  Erro ao salvar assinatura no PRIMARY, usando fallback...');
+          throw primaryError;
+        }
+      } else {
+        throw new Error('PRIMARY não disponível');
       }
-      if (assinaturaData.usuarioId) {
-        assinaturaData.usuarioId = assinaturaData.usuarioId instanceof mongoose.Types.ObjectId 
-          ? assinaturaData.usuarioId 
-          : new mongoose.Types.ObjectId(assinaturaData.usuarioId.toString());
-      }
-      await databaseManager.writeToAllClusters('assinaturas', 'insertOne', assinaturaData);
-      console.log('✅ Assinatura replicada em todos os clusters');
     } catch (error) {
-      console.error('⚠️  Erro ao replicar assinatura:', error.message);
+      console.log('🔄 PRIMARY não disponível, tentando salvar assinatura em outro cluster...');
+      
+      try {
+        assinaturaData = assinatura.toObject();
+        // Garantir que _id e usuarioId sejam preservados como ObjectId
+        if (assinaturaData._id) {
+          assinaturaData._id = assinaturaData._id instanceof mongoose.Types.ObjectId 
+            ? assinaturaData._id 
+            : new mongoose.Types.ObjectId(assinaturaData._id.toString());
+        }
+        if (assinaturaData.usuarioId) {
+          assinaturaData.usuarioId = assinaturaData.usuarioId instanceof mongoose.Types.ObjectId 
+            ? assinaturaData.usuarioId 
+            : new mongoose.Types.ObjectId(assinaturaData.usuarioId.toString());
+        }
+        
+        const writeResult = await databaseManager.writeWithFallback('assinaturas', 'insertOne', assinaturaData);
+        assinaturaClusterUsed = writeResult.clusterUsed;
+        console.log(`✅ Assinatura salva no cluster: ${assinaturaClusterUsed}`);
+      } catch (fallbackError) {
+        console.error('⚠️  Erro ao criar assinatura:', fallbackError.message);
+        // Continuar mesmo se falhar a assinatura
+      }
+    }
+    
+    // Replicar assinatura se salvou no PRIMARY
+    if (assinaturaData && assinaturaClusterUsed === databaseManager.primaryCluster) {
+      try {
+        await databaseManager.writeToAllClusters('assinaturas', 'insertOne', assinaturaData, `skip:${assinaturaClusterUsed}`);
+        console.log('✅ Assinatura replicada em todos os clusters');
+      } catch (error) {
+        console.error('⚠️  Erro ao replicar assinatura:', error.message);
+      }
+    } else if (assinaturaData && assinaturaClusterUsed) {
+      // Se salvou em outro cluster, replicar nos outros
+      try {
+        await databaseManager.writeToAllClusters('assinaturas', 'insertOne', assinaturaData, `skip:${assinaturaClusterUsed}`);
+        console.log('✅ Assinatura replicada nos outros clusters');
+      } catch (error) {
+        console.error('⚠️  Erro ao replicar assinatura:', error.message);
+      }
     }
 
     // Gerar token (incluindo email para facilitar busca em múltiplos clusters)
+    console.log('🔑 Gerando token JWT...');
     const token = generateToken(user._id, user.email);
 
     // Remover senha do objeto de retorno
     const userResponse = user.toObject();
     delete userResponse.senha;
 
+    console.log('✅ Registro concluído com sucesso!');
     res.status(201).json({
       success: true,
       message: 'Usuário criado com sucesso!',
@@ -219,11 +368,11 @@ const register = async (req, res) => {
       }
     });
   } catch (error) {
-    console.error('Erro ao registrar usuário:', error);
+    console.error('❌ Erro ao registrar usuário:', error);
     res.status(500).json({
       success: false,
       message: 'Erro ao criar usuário',
-      error: error.message
+      error: process.env.NODE_ENV === 'development' ? error.message : 'Erro interno do servidor'
     });
   }
 };
@@ -237,38 +386,38 @@ const login = async (req, res) => {
   try {
     const { emailOrUsername, senha } = req.body;
 
-    // Buscar usuário por email ou nome de usuário no PRIMARY atual
-    let user = await User.findOne({
-      $or: [
-        { email: emailOrUsername },
-        { nomeUsuario: emailOrUsername }
-      ]
-    }).select('+senha');
-
-    // Se não encontrar no PRIMARY, tentar buscar em outros clusters
-    if (!user) {
-      console.log('⚠️  Usuário não encontrado no PRIMARY, tentando outros clusters...');
-      try {
-        // Tentar buscar diretamente na collection usando databaseManager
-        const userData = await databaseManager.readFromCluster(
-          'users',
-          'findOne',
-          {
-            $or: [
-              { email: emailOrUsername },
-              { nomeUsuario: emailOrUsername }
-            ]
-          }
-        );
-        
-        if (userData) {
-          // Criar instância do modelo User a partir dos dados encontrados
-          user = new User(userData);
-          await user.isModified('senha'); // Garantir que métodos do modelo funcionem
-        }
-      } catch (error) {
-        console.error('⚠️  Erro ao buscar em outros clusters:', error.message);
+    // Buscar usuário usando readFromCluster (que já faz fallback automático)
+    // Isso garante que funciona mesmo quando o PRIMARY está offline
+    // NÃO usar User.findOne() diretamente pois pode estar conectado ao cluster offline
+    let user = null;
+    
+    try {
+      // Buscar usuário diretamente na collection (não via modelo) para incluir senha
+      // Usar findAvailableCluster para garantir que busca em cluster disponível
+      const availableCluster = databaseManager.findAvailableCluster();
+      
+      if (!availableCluster || !availableCluster.connection || !availableCluster.connection.db) {
+        throw new Error('Nenhum cluster disponível para buscar usuário');
       }
+      
+      // Buscar usuário com senha incluída
+      const userData = await availableCluster.connection.db.collection('users').findOne({
+        $or: [
+          { email: emailOrUsername },
+          { nomeUsuario: emailOrUsername }
+        ]
+      });
+      
+      if (userData) {
+        // Criar instância do modelo User a partir dos dados encontrados
+        user = new User(userData);
+        // A senha já vem incluída quando buscamos diretamente na collection
+        if (userData.senha) {
+          user.senha = userData.senha;
+        }
+      }
+    } catch (error) {
+      console.error('❌ Erro ao buscar usuário:', error.message);
     }
 
     if (!user) {

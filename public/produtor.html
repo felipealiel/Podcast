@@ -1,0 +1,476 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PobreFy - Área do Produtor</title>
+    <link rel="stylesheet" href="./css/style.css">
+    <style>
+        .produtor-container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .upload-section {
+            background: #1e1e1e;
+            border-radius: 10px;
+            padding: 30px;
+            margin-bottom: 30px;
+        }
+        .upload-form {
+            display: grid;
+            gap: 20px;
+        }
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+        .form-group label {
+            margin-bottom: 8px;
+            color: #fff;
+            font-weight: 600;
+        }
+        .form-group input,
+        .form-group textarea,
+        .form-group select {
+            padding: 12px;
+            border: 1px solid #333;
+            border-radius: 5px;
+            background: #2a2a2a;
+            color: #fff;
+            font-size: 14px;
+        }
+        .form-group textarea {
+            resize: vertical;
+            min-height: 100px;
+        }
+        .file-input-wrapper {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+        .file-input-wrapper input[type="file"] {
+            position: absolute;
+            opacity: 0;
+            width: 100%;
+            height: 100%;
+            cursor: pointer;
+        }
+        .file-input-label {
+            display: block;
+            padding: 15px;
+            background: #2a2a2a;
+            border: 2px dashed #555;
+            border-radius: 5px;
+            text-align: center;
+            cursor: pointer;
+            color: #ccc;
+            transition: all 0.3s;
+        }
+        .file-input-label:hover {
+            border-color: #1db954;
+            background: #333;
+        }
+        .file-input-label.has-file {
+            border-color: #1db954;
+            background: #1e3a2e;
+            color: #1db954;
+        }
+        .btn-upload {
+            background: #1db954;
+            color: #fff;
+            padding: 15px 30px;
+            border: none;
+            border-radius: 5px;
+            font-size: 16px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s;
+        }
+        .btn-upload:hover {
+            background: #1ed760;
+            transform: translateY(-2px);
+        }
+        .btn-upload:disabled {
+            background: #555;
+            cursor: not-allowed;
+            transform: none;
+        }
+        .musicas-list {
+            background: #1e1e1e;
+            border-radius: 10px;
+            padding: 30px;
+        }
+        .musicas-grid {
+            display: grid;
+            gap: 20px;
+        }
+        .musica-card {
+            background: #2a2a2a;
+            border-radius: 8px;
+            padding: 20px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .musica-info h3 {
+            margin: 0 0 5px 0;
+            color: #fff;
+        }
+        .musica-info p {
+            margin: 5px 0;
+            color: #ccc;
+            font-size: 14px;
+        }
+        .musica-actions {
+            display: flex;
+            gap: 10px;
+        }
+        .btn-action {
+            padding: 8px 16px;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 14px;
+            transition: all 0.3s;
+        }
+        .btn-edit {
+            background: #4285f4;
+            color: #fff;
+        }
+        .btn-delete {
+            background: #ea4335;
+            color: #fff;
+        }
+        .btn-action:hover {
+            opacity: 0.8;
+        }
+        .alert {
+            padding: 15px;
+            border-radius: 5px;
+            margin-bottom: 20px;
+        }
+        .alert-success {
+            background: #1e3a2e;
+            color: #1db954;
+            border: 1px solid #1db954;
+        }
+        .alert-error {
+            background: #3a1e1e;
+            color: #ea4335;
+            border: 1px solid #ea4335;
+        }
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #ccc;
+        }
+    </style>
+</head>
+<body>
+    <div class="produtor-container">
+        <header style="margin-bottom: 30px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 20px;">
+            <div>
+                <h1 style="color: #fff; margin-bottom: 10px;">🎵 Área do Produtor</h1>
+                <p style="color: #ccc;">Gerencie suas músicas e uploads</p>
+            </div>
+            <button id="logoutBtn" onclick="logout()" style="padding: 12px 24px; background: #ea4335; color: #fff; border: none; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s;">
+                Sair
+            </button>
+        </header>
+
+        <div id="alert-container"></div>
+
+        <!-- Seção de Upload -->
+        <section class="upload-section">
+            <h2 style="color: #fff; margin-bottom: 20px;">Upload de Nova Música</h2>
+            <form id="upload-form" class="upload-form" enctype="multipart/form-data">
+                <div class="form-group">
+                    <label for="arquivo">Arquivo de Áudio *</label>
+                    <div class="file-input-wrapper">
+                        <input type="file" id="arquivo" name="arquivo" accept="audio/*" required>
+                        <label for="arquivo" class="file-input-label" id="arquivo-label">
+                            Clique para selecionar arquivo de áudio (MP3, WAV, AAC, etc.)
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="capa">Capa do Álbum (opcional)</label>
+                    <div class="file-input-wrapper">
+                        <input type="file" id="capa" name="capa" accept="image/*">
+                        <label for="capa" class="file-input-label" id="capa-label">
+                            Clique para selecionar imagem da capa
+                        </label>
+                    </div>
+                </div>
+
+                <div class="form-group">
+                    <label for="titulo">Título *</label>
+                    <input type="text" id="titulo" name="titulo" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="autor">Autor/Artista *</label>
+                    <input type="text" id="autor" name="autor" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="ano">Ano *</label>
+                    <input type="number" id="ano" name="ano" min="1900" max="2025" required>
+                </div>
+
+                <div class="form-group">
+                    <label for="genero">Gênero *</label>
+                    <select id="genero" name="genero" required>
+                        <option value="">Selecione um gênero</option>
+                        <option value="Pop">Pop</option>
+                        <option value="Rock">Rock</option>
+                        <option value="Hip Hop">Hip Hop</option>
+                        <option value="R&B">R&B</option>
+                        <option value="Country">Country</option>
+                        <option value="Jazz">Jazz</option>
+                        <option value="Blues">Blues</option>
+                        <option value="Electronic">Electronic</option>
+                        <option value="MPB">MPB</option>
+                        <option value="Sertanejo">Sertanejo</option>
+                        <option value="Forró">Forró</option>
+                        <option value="Funk Carioca">Funk Carioca</option>
+                        <option value="Outros">Outros</option>
+                    </select>
+                </div>
+
+                <div class="form-group">
+                    <label for="album">Álbum</label>
+                    <input type="text" id="album" name="album">
+                </div>
+
+                <div class="form-group">
+                    <label for="tags">Tags (separadas por vírgula)</label>
+                    <input type="text" id="tags" name="tags" placeholder="ex: feliz, animada, energia">
+                </div>
+
+                <div class="form-group">
+                    <label for="letra">Letra da Música</label>
+                    <textarea id="letra" name="letra"></textarea>
+                </div>
+
+                <div class="form-group">
+                    <label for="visibilidade">Visibilidade</label>
+                    <select id="visibilidade" name="visibilidade">
+                        <option value="publico">Público</option>
+                        <option value="privado">Privado</option>
+                    </select>
+                </div>
+
+                <button type="submit" class="btn-upload" id="upload-btn">
+                    Fazer Upload
+                </button>
+            </form>
+        </section>
+
+        <!-- Lista de Músicas -->
+        <section class="musicas-list">
+            <h2 style="color: #fff; margin-bottom: 20px;">Minhas Músicas</h2>
+            <div id="musicas-container">
+                <div class="loading">Carregando...</div>
+            </div>
+        </section>
+    </div>
+
+    <script>
+        const API_URL = 'http://localhost:3000/api/v1';
+        const token = localStorage.getItem('token');
+
+        if (!token) {
+            window.location.href = '/index.html';
+        }
+
+        // File input handlers
+        document.getElementById('arquivo').addEventListener('change', function(e) {
+            const label = document.getElementById('arquivo-label');
+            if (e.target.files.length > 0) {
+                label.textContent = e.target.files[0].name;
+                label.classList.add('has-file');
+            } else {
+                label.textContent = 'Clique para selecionar arquivo de áudio (MP3, WAV, AAC, etc.)';
+                label.classList.remove('has-file');
+            }
+        });
+
+        document.getElementById('capa').addEventListener('change', function(e) {
+            const label = document.getElementById('capa-label');
+            if (e.target.files.length > 0) {
+                label.textContent = e.target.files[0].name;
+                label.classList.add('has-file');
+            } else {
+                label.textContent = 'Clique para selecionar imagem da capa';
+                label.classList.remove('has-file');
+            }
+        });
+
+        // Upload form handler
+        document.getElementById('upload-form').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const btn = document.getElementById('upload-btn');
+            btn.disabled = true;
+            btn.textContent = 'Enviando...';
+
+            const formData = new FormData(this);
+            
+            try {
+                const response = await fetch(`${API_URL}/musicas/upload`, {
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    showAlert('Música enviada com sucesso!', 'success');
+                    this.reset();
+                    document.getElementById('arquivo-label').classList.remove('has-file');
+                    document.getElementById('capa-label').classList.remove('has-file');
+                    loadMusicas();
+                } else {
+                    showAlert(data.message || 'Erro ao fazer upload', 'error');
+                }
+            } catch (error) {
+                showAlert('Erro ao fazer upload: ' + error.message, 'error');
+            } finally {
+                btn.disabled = false;
+                btn.textContent = 'Fazer Upload';
+            }
+        });
+
+        // Load user's music
+        async function loadMusicas() {
+            try {
+                const response = await fetch(`${API_URL}/musicas/minhas/listar`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+
+                const data = await response.json();
+
+                if (response.ok) {
+                    displayMusicas(data.data || []);
+                } else {
+                    document.getElementById('musicas-container').innerHTML = 
+                        '<div class="loading">Erro ao carregar músicas</div>';
+                }
+            } catch (error) {
+                document.getElementById('musicas-container').innerHTML = 
+                    '<div class="loading">Erro ao carregar músicas</div>';
+            }
+        }
+
+        function displayMusicas(musicas) {
+            const container = document.getElementById('musicas-container');
+            
+            if (musicas.length === 0) {
+                container.innerHTML = '<div class="loading">Nenhuma música cadastrada ainda</div>';
+                return;
+            }
+
+            container.innerHTML = '<div class="musicas-grid">' +
+                musicas.map(musica => `
+                    <div class="musica-card">
+                        <div class="musica-info">
+                            <h3>${musica.titulo}</h3>
+                            <p><strong>Autor:</strong> ${musica.autor}</p>
+                            <p><strong>Gênero:</strong> ${musica.genero}</p>
+                            <p><strong>Ano:</strong> ${musica.ano}</p>
+                            <p><strong>Status:</strong> ${musica.status}</p>
+                        </div>
+                        <div class="musica-actions">
+                            <button class="btn-action btn-edit" onclick="editMusica('${musica._id}')">Editar</button>
+                            <button class="btn-action btn-delete" onclick="deleteMusica('${musica._id}')">Deletar</button>
+                        </div>
+                    </div>
+                `).join('') +
+                '</div>';
+        }
+
+        function deleteMusica(id) {
+            if (!confirm('Tem certeza que deseja deletar esta música?')) return;
+
+            fetch(`${API_URL}/musicas/${id}`, {
+                method: 'DELETE',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.success) {
+                    showAlert('Música deletada com sucesso', 'success');
+                    loadMusicas();
+                } else {
+                    showAlert(data.message || 'Erro ao deletar', 'error');
+                }
+            })
+            .catch(error => {
+                showAlert('Erro ao deletar: ' + error.message, 'error');
+            });
+        }
+
+        function editMusica(id) {
+            // TODO: Implementar edição
+            alert('Funcionalidade de edição em desenvolvimento');
+        }
+
+        function showAlert(message, type) {
+            const container = document.getElementById('alert-container');
+            const alert = document.createElement('div');
+            alert.className = `alert alert-${type}`;
+            alert.textContent = message;
+            container.appendChild(alert);
+
+            setTimeout(() => {
+                alert.remove();
+            }, 5000);
+        }
+
+        // Função de Logout
+        function logout() {
+            console.log('Fazendo logout...');
+            
+            // Limpar localStorage
+            localStorage.removeItem('token');
+            localStorage.removeItem('user');
+            
+            // Redirecionar para página de login
+            window.location.href = '/index.html';
+        }
+
+        // Tornar função acessível globalmente
+        window.logout = logout;
+
+        // Adicionar hover effect ao botão de logout quando o DOM estiver pronto
+        (function() {
+            const logoutBtn = document.getElementById('logoutBtn');
+            if (logoutBtn) {
+                logoutBtn.addEventListener('mouseenter', function() {
+                    this.style.background = '#d33b2c';
+                    this.style.transform = 'translateY(-2px)';
+                });
+                
+                logoutBtn.addEventListener('mouseleave', function() {
+                    this.style.background = '#ea4335';
+                    this.style.transform = 'translateY(0)';
+                });
+            }
+        })();
+
+        // Load musicas on page load
+        loadMusicas();
+    </script>
+</body>
+</html>
+

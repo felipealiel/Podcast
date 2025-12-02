@@ -209,10 +209,83 @@ const isPremium = (req, res, next) => {
   next();
 };
 
+/**
+ * Verificar se é produtor ou admin (RF07)
+ */
+const isProducer = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Acesso negado. Autenticação necessária.'
+    });
+  }
+  
+  const role = req.user.account?.role || 'user';
+  
+  if (role !== 'producer' && role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Acesso negado. Apenas produtores e administradores podem realizar esta ação.'
+    });
+  }
+  
+  next();
+};
+
+/**
+ * Verificar se é admin
+ */
+const isAdminOnly = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Acesso negado. Autenticação necessária.'
+    });
+  }
+  
+  const role = req.user.account?.role || 'user';
+  
+  if (role !== 'admin') {
+    return res.status(403).json({
+      success: false,
+      message: 'Acesso negado. Apenas administradores podem realizar esta ação.'
+    });
+  }
+  
+  next();
+};
+
+/**
+ * Verificar se é produtor, admin ou tem plano pro
+ */
+const isProducerOrPro = (req, res, next) => {
+  if (!req.user) {
+    return res.status(401).json({
+      success: false,
+      message: 'Acesso negado. Autenticação necessária.'
+    });
+  }
+  
+  const role = req.user.account?.role || 'user';
+  const subscription = req.user.account?.subscription || 'free';
+  
+  if (role !== 'producer' && role !== 'admin' && subscription !== 'pro') {
+    return res.status(403).json({
+      success: false,
+      message: 'Acesso negado. Esta funcionalidade requer permissão de produtor, admin ou plano Pro.'
+    });
+  }
+  
+  next();
+};
+
 module.exports = {
   auth,
   optionalAuth,
   isAdmin,
-  isPremium
+  isPremium,
+  isProducer,
+  isAdminOnly,
+  isProducerOrPro
 };
 

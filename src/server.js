@@ -6,6 +6,8 @@ const morgan = require('morgan');
 require('dotenv').config();
 
 const databaseManager = require('./config/database');
+const { metricsMiddleware, errorMetricsMiddleware } = require('./middlewares/metrics');
+const logger = require('./utils/logger');
 
 class Server {
   constructor() {
@@ -20,8 +22,48 @@ class Server {
    * Configurar middlewares
    */
   setupMiddlewares() {
-    // Segurança
-    this.app.use(helmet());
+    // Segurança - Configurar Helmet com políticas adequadas
+    this.app.use(helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: [
+            "'self'",
+            "'unsafe-inline'", // Permitir scripts inline (necessário para algumas páginas)
+            "'unsafe-eval'" // Permitir eval (pode ser necessário para algumas libs)
+          ],
+          styleSrc: [
+            "'self'",
+            "'unsafe-inline'", // Permitir estilos inline
+            "https://fonts.googleapis.com"
+          ],
+          fontSrc: [
+            "'self'",
+            "https://fonts.gstatic.com"
+          ],
+          imgSrc: [
+            "'self'",
+            "data:", // Permitir data URIs para imagens
+            "blob:", // Permitir blob URLs
+            "https:" // Permitir imagens de qualquer origem HTTPS
+          ],
+          mediaSrc: [
+            "'self'",
+            "blob:", // Permitir blob URLs para streaming
+            "data:" // Permitir data URIs
+          ],
+          connectSrc: [
+            "'self'",
+            "ws:", // WebSocket
+            "wss:" // WebSocket seguro
+          ],
+          objectSrc: ["'none'"],
+          upgradeInsecureRequests: process.env.NODE_ENV === 'production' ? [] : null
+        }
+      },
+      crossOriginEmbedderPolicy: false, // Desabilitar para permitir recursos externos
+      crossOriginResourcePolicy: { policy: "cross-origin" } // Permitir recursos cross-origin
+    }));
     
     // CORS
     this.app.use(cors({
@@ -39,13 +81,51 @@ class Server {
       this.app.use(morgan('combined'));
     }
     
+    // RF09 - Métricas e logs
+    this.app.use(metricsMiddleware);
+    
     // Body parser
     this.app.use(express.json({ limit: '10mb' }));
     this.app.use(express.urlencoded({ extended: true, limit: '10mb' }));
     
     // Arquivos estáticos
-    this.app.use(express.static('public'));
-    this.app.use('/uploads', express.static('uploads'));
+    this.app.use(express.static('public', {
+      setHeaders: (res, path) => {
+        // Permitir CORS para arquivos estáticos
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+        
+        // Headers específicos para mídia
+        if (path.match(/\.(mp3|wav|aac|ogg|m4a|flac)$/)) {
+          res.set('Content-Type', 'audio/mpeg');
+          res.set('Accept-Ranges', 'bytes');
+        }
+        if (path.match(/\.(jpg|jpeg|png|gif|webp)$/)) {
+          res.set('Content-Type', 'image/jpeg');
+        }
+      }
+    }));
+    
+    // Servir uploads com headers adequados
+    this.app.use('/uploads', express.static('uploads', {
+      setHeaders: (res, filePath) => {
+        // Permitir CORS
+        res.set('Access-Control-Allow-Origin', '*');
+        res.set('Access-Control-Allow-Methods', 'GET, HEAD, OPTIONS');
+        
+        // Headers para streaming de áudio
+        if (filePath.match(/\.(mp3|wav|aac|ogg|m4a|flac)$/)) {
+          res.set('Content-Type', 'audio/mpeg');
+          res.set('Accept-Ranges', 'bytes');
+          res.set('Cache-Control', 'public, max-age=31536000'); // Cache de 1 ano
+        }
+        
+        // Headers para imagens
+        if (filePath.match(/\.(jpg|jpeg|png|gif|webp)$/)) {
+          res.set('Cache-Control', 'public, max-age=31536000');
+        }
+      }
+    }));
   }
 
   /**
@@ -77,9 +157,16 @@ class Server {
 
     // Rotas da API
     this.app.use('/api/v1/auth', require('./routes/auth.routes'));
+    this.app.use('/api/v1/playlists', require('./routes/playlist.routes'));
+    this.app.use('/api/v1/favoritos', require('./routes/favorito.routes'));
+    this.app.use('/api/v1/historico', require('./routes/historico.routes'));
+    this.app.use('/api/v1/musicas', require('./routes/musica.routes'));
+    this.app.use('/api/v1/busca', require('./routes/busca.routes'));
+    this.app.use('/api/v1/streaming', require('./routes/streaming.routes'));
+    this.app.use('/api/v1/metrics', require('./routes/metrics.routes'));
+    this.app.use('/api/v1/recomendacoes', require('./routes/recomendacao.routes'));
+    this.app.use('/api/v1/admin', require('./routes/admin.routes'));
     // this.app.use('/api/v1/podcasts', require('./routes/podcasts'));
-    // this.app.use('/api/v1/musicas', require('./routes/musicas'));
-    // this.app.use('/api/v1/playlists', require('./routes/playlists'));
     // this.app.use('/api/v1/assinaturas', require('./routes/assinaturas'));
 
     // Rota 404
@@ -95,8 +182,15 @@ class Server {
    * Configurar tratamento de erros
    */
   setupErrorHandling() {
+    // RF09 - Middleware de métricas de erro
+    this.app.use(errorMetricsMiddleware);
+    
     this.app.use((err, req, res, next) => {
-      console.error('Erro:', err);
+      logger.error('Erro na requisição', err, {
+        method: req.method,
+        path: req.path,
+        statusCode: err.statusCode || 500
+      });
 
       const statusCode = err.statusCode || 500;
       const message = err.message || 'Erro interno do servidor';
@@ -111,12 +205,23 @@ class Server {
 
     // Tratamento de erros não capturados
     process.on('unhandledRejection', (reason, promise) => {
-      console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+      logger.error('Unhandled Rejection', reason instanceof Error ? reason : new Error(String(reason)), {
+        promise: promise.toString()
+      });
+      // Não encerrar o processo em desenvolvimento
+      if (process.env.NODE_ENV === 'production') {
+        console.error('Unhandled Rejection - Encerrando processo');
+        process.exit(1);
+      }
     });
 
     process.on('uncaughtException', (error) => {
+      logger.error('Uncaught Exception', error);
       console.error('Uncaught Exception:', error);
-      process.exit(1);
+      // Em produção, encerrar graciosamente
+      if (process.env.NODE_ENV === 'production') {
+        this.shutdown();
+      }
     });
   }
 
@@ -141,8 +246,30 @@ class Server {
       // Conectar ao banco
       await this.connectDatabase();
 
+      // Criar servidor HTTP com timeout aumentado para uploads
+      const http = require('http');
+      const server = http.createServer(this.app);
+      
+      // Aumentar timeout para uploads grandes (5 minutos)
+      server.timeout = 300000; // 5 minutos
+      server.keepAliveTimeout = 65000;
+      server.headersTimeout = 66000;
+      
+      // Armazenar referência do servidor para shutdown
+      this.server = server;
+      
+      // Tratamento de erros do servidor
+      server.on('error', (error) => {
+        logger.error('Erro no servidor HTTP', error);
+        if (error.code === 'EADDRINUSE') {
+          console.error(`❌ Porta ${this.port} já está em uso`);
+        } else {
+          console.error('❌ Erro no servidor:', error);
+        }
+      });
+      
       // Iniciar servidor
-      this.app.listen(this.port, () => {
+      server.listen(this.port, () => {
         console.log('');
         console.log('🎵 PobreFy Streaming API');
         console.log('================================');
@@ -150,8 +277,14 @@ class Server {
         console.log(`🌍 Ambiente: ${process.env.NODE_ENV || 'development'}`);
         console.log(`📡 URL: http://localhost:${this.port}`);
         console.log(`💚 Health Check: http://localhost:${this.port}/health`);
+        console.log(`📊 Métricas: http://localhost:${this.port}/api/v1/metrics/system`);
         console.log('================================');
         console.log('');
+        
+        logger.info('Servidor iniciado com sucesso', {
+          port: this.port,
+          environment: process.env.NODE_ENV || 'development'
+        });
       });
 
       // Tratamento de encerramento gracioso
@@ -170,6 +303,13 @@ class Server {
     console.log('\n🔴 Encerrando servidor...');
     
     try {
+      // Fechar servidor HTTP
+      if (this.server) {
+        this.server.close(() => {
+          console.log('✅ Servidor HTTP fechado');
+        });
+      }
+      
       // Desconectar do banco
       await databaseManager.disconnectAll();
       console.log('✅ Banco de dados desconectado');
