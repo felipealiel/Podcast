@@ -192,15 +192,30 @@ class Server {
         statusCode: err.statusCode || 500
       });
 
+      // Verificar se a resposta já foi enviada
+      if (res.headersSent) {
+        logger.warn('Erro após resposta enviada', err, {
+          method: req.method,
+          path: req.path
+        });
+        return next(err);
+      }
+
       const statusCode = err.statusCode || 500;
       const message = err.message || 'Erro interno do servidor';
 
-      res.status(statusCode).json({
-        error: {
-          message,
-          ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
-        }
-      });
+      try {
+        res.status(statusCode).json({
+          success: false,
+          error: {
+            message,
+            ...(process.env.NODE_ENV === 'development' && { stack: err.stack })
+          }
+        });
+      } catch (sendError) {
+        // Se não conseguir enviar resposta, apenas logar
+        logger.error('Erro crítico ao enviar resposta de erro', sendError);
+      }
     });
 
     // Tratamento de erros não capturados
@@ -250,10 +265,14 @@ class Server {
       const http = require('http');
       const server = http.createServer(this.app);
       
-      // Aumentar timeout para uploads grandes (5 minutos)
-      server.timeout = 300000; // 5 minutos
-      server.keepAliveTimeout = 65000;
-      server.headersTimeout = 66000;
+      // Aumentar timeout para uploads grandes (10 minutos)
+      // Isso é necessário para arquivos grandes e processamento de áudio
+      server.timeout = 600000; // 10 minutos
+      server.keepAliveTimeout = 120000; // 2 minutos
+      server.headersTimeout = 125000; // 2 minutos e 5 segundos
+      
+      // Desabilitar timeout automático para requisições de upload
+      // O timeout será gerenciado manualmente no middleware
       
       // Armazenar referência do servidor para shutdown
       this.server = server;
@@ -266,6 +285,65 @@ class Server {
         } else {
           console.error('❌ Erro no servidor:', error);
         }
+      });
+      
+      // Tratamento de erros de conexão (evitar crash)
+      server.on('clientError', (err, socket) => {
+        logger.warn('Erro de cliente HTTP', err);
+        if (!socket.destroyed) {
+          socket.end('HTTP/1.1 400 Bad Request\r\n\r\n');
+        }
+      });
+      
+      // Prevenir crash por erros não tratados em requisições
+      server.on('request', (req, res) => {
+        // Para rotas de upload, usar timeout maior
+        const isUploadRoute = req.path && req.path.includes('/upload');
+        const timeoutDuration = isUploadRoute ? 600000 : 300000; // 10 min para upload, 5 min para outros
+        
+        // Adicionar timeout na requisição para evitar conexões penduradas
+        req.setTimeout(timeoutDuration, () => {
+          if (!res.headersSent) {
+            logger.warn('Timeout da requisição', {
+              method: req.method,
+              path: req.path,
+              timeout: timeoutDuration
+            });
+            try {
+              res.status(408).json({
+                success: false,
+                message: 'Tempo limite da requisição excedido'
+              });
+            } catch (e) {
+              logger.error('Erro ao enviar resposta de timeout', e);
+            }
+          }
+        });
+        
+        // Para rotas de upload, não fechar conexão prematuramente
+        if (isUploadRoute) {
+          // Desabilitar timeout automático do socket para uploads
+          req.socket.setTimeout(0); // Sem timeout no socket
+        }
+        
+        // Garantir que erros não fechem o servidor
+        res.on('error', (err) => {
+          if (!res.headersSent) {
+            logger.warn('Erro ao enviar resposta', err, {
+              method: req.method,
+              path: req.path
+            });
+            try {
+              res.status(500).json({
+                success: false,
+                message: 'Erro interno do servidor'
+              });
+            } catch (e) {
+              // Se não conseguir enviar resposta, apenas logar
+              logger.error('Erro crítico ao enviar resposta', e);
+            }
+          }
+        });
       });
       
       // Iniciar servidor

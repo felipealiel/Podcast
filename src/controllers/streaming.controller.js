@@ -122,35 +122,64 @@ const streamAudio = async (req, res) => {
     if (req.user) {
       setImmediate(async () => {
         try {
+          console.log('📝 [STREAMING] Registrando reprodução no histórico', {
+            userId: req.user._id,
+            musicaId: musica._id
+          });
+          
           await musica.incrementarReproducoes();
           
           // Registrar no histórico se usuário autenticado
           const Historico = require('../models/Historico');
+          const databaseManager = require('../config/database');
+          
+          const agora = new Date();
           const historico = new Historico({
             usuarioId: req.user._id,
             tipoConteudo: 'musica',
             conteudoId: musica._id,
             tipoConteudoModel: 'Musica',
             reproducao: {
-              dataInicio: new Date(),
+              dataInicio: agora,
               duracaoReproduzida: 0,
               duracaoTotal: musica.duracao || 0,
-              percentualCompleto: 0
+              percentualCompleto: 0,
+              foiCompleta: false
             },
             contexto: {
               dispositivo: req.body.dispositivo || 'web',
               userAgent: req.headers['user-agent'],
               ipAddress: req.ip || req.connection.remoteAddress
+            },
+            preferencias: {
+              horarioPreferido: (() => {
+                const hora = agora.getHours();
+                if (hora >= 6 && hora < 12) return 'manha';
+                if (hora >= 12 && hora < 18) return 'tarde';
+                if (hora >= 18 && hora < 24) return 'noite';
+                return 'madrugada';
+              })()
             }
           });
           
-          await historico.save().catch(err => {
-            console.error('Erro ao registrar histórico:', err);
+          // Salvar em todos os clusters
+          const savedHistorico = await databaseManager.writeToAllClusters(
+            'historicos',
+            'insertOne',
+            historico.toObject()
+          );
+          
+          console.log('✅ [STREAMING] Histórico registrado com sucesso', {
+            userId: req.user._id,
+            musicaId: musica._id,
+            results: Object.keys(savedHistorico.results || {})
           });
         } catch (error) {
-          console.error('Erro ao registrar reprodução:', error);
+          console.error('❌ [STREAMING] Erro ao registrar reprodução no histórico:', error);
         }
       });
+    } else {
+      console.log('⚠️ [STREAMING] Usuário não autenticado, histórico não será registrado');
     }
   } catch (error) {
     console.error('Erro no streaming:', error);

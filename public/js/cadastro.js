@@ -216,3 +216,28 @@ senhaInput.addEventListener('input', (e) => {
     }
 });
 
+// Event listeners para botões de cadastro social
+window.addEventListener('DOMContentLoaded', () => {
+    const googleBtn = document.getElementById('googleCadastroBtn');
+    const facebookBtn = document.getElementById('facebookCadastroBtn');
+    const appleBtn = document.getElementById('appleCadastroBtn');
+    
+    if (googleBtn) {
+        googleBtn.addEventListener('click', () => {
+            alert('Cadastro com Google em breve!');
+        });
+    }
+    
+    if (facebookBtn) {
+        facebookBtn.addEventListener('click', () => {
+            alert('Cadastro com Facebook em breve!');
+        });
+    }
+    
+    if (appleBtn) {
+        appleBtn.addEventListener('click', () => {
+            alert('Cadastro com Apple em breve!');
+        });
+    }
+});
+

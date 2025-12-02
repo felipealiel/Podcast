@@ -39,7 +39,11 @@ const criarPlaylist = async (req, res) => {
     res.status(201).json({
       success: true,
       message: 'Playlist criada com sucesso',
-      data: savedPlaylist
+      data: {
+        _id: playlist._id || firstResult?.insertedId,
+        ...playlist.toObject(),
+        results: savedPlaylist.results
+      }
     });
   } catch (error) {
     res.status(500).json({

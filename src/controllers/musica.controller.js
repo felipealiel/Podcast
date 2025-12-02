@@ -14,16 +14,20 @@ const logger = require('../utils/logger');
  * Upload de música (apenas produtores)
  */
 const uploadMusica = async (req, res) => {
+  const startTime = Date.now();
+  console.log('🚀 [UPLOAD LOCAL] Iniciando upload de música (apenas local, sem banco)');
+  
   try {
     const usuarioId = req.user._id;
     
     // Log para debug
-    logger.debug('Iniciando upload de música', {
+    console.log('📋 [UPLOAD LOCAL] Dados recebidos:', {
       userId: usuarioId.toString(),
       hasFiles: !!req.files,
       hasFile: !!req.file,
       filesKeys: req.files ? Object.keys(req.files) : [],
-      bodyKeys: Object.keys(req.body)
+      bodyKeys: Object.keys(req.body),
+      titulo: req.body.titulo
     });
 
     const {
@@ -47,27 +51,67 @@ const uploadMusica = async (req, res) => {
       : (req.file ? req.file : null);
     
     if (!arquivoEnviado) {
+      console.error('❌ [UPLOAD LOCAL] Arquivo não encontrado!', {
+        hasFiles: !!req.files,
+        hasFile: !!req.file,
+        filesKeys: req.files ? Object.keys(req.files) : [],
+        bodyKeys: Object.keys(req.body)
+      });
+      
       logger.warn('Tentativa de upload sem arquivo', {
         userId: usuarioId.toString(),
         hasFiles: !!req.files,
         hasFile: !!req.file
       });
+      
       return res.status(400).json({
         success: false,
         message: 'Arquivo de áudio é obrigatório. Envie o arquivo com o campo "arquivo".',
-        hint: 'Certifique-se de usar multipart/form-data e o campo deve se chamar "arquivo"'
+        hint: 'Certifique-se de usar multipart/form-data e o campo deve se chamar "arquivo"',
+        debug: {
+          hasFiles: !!req.files,
+          hasFile: !!req.file,
+          filesKeys: req.files ? Object.keys(req.files) : []
+        }
       });
     }
+    
+    console.log('✅ [UPLOAD LOCAL] Arquivo encontrado:', {
+      originalname: arquivoEnviado.originalname,
+      mimetype: arquivoEnviado.mimetype,
+      size: arquivoEnviado.size,
+      path: arquivoEnviado.path
+    });
 
     // Validar campos obrigatórios
     if (!titulo || !autor || !ano || !genero) {
+      console.error('❌ [UPLOAD LOCAL] Campos obrigatórios faltando:', {
+        titulo: !!titulo,
+        autor: !!autor,
+        ano: !!ano,
+        genero: !!genero,
+        body: req.body
+      });
+      
       // Remover arquivo enviado se houver erro
-      if (arquivoEnviado && fs.existsSync(arquivoEnviado.path)) {
-        fs.unlinkSync(arquivoEnviado.path);
+      if (arquivoEnviado && arquivoEnviado.path && fs.existsSync(arquivoEnviado.path)) {
+        try {
+          fs.unlinkSync(arquivoEnviado.path);
+          console.log('🗑️ [UPLOAD LOCAL] Arquivo removido após erro de validação');
+        } catch (err) {
+          console.error('❌ [UPLOAD LOCAL] Erro ao remover arquivo:', err);
+        }
       }
+      
       return res.status(400).json({
         success: false,
-        message: 'Título, autor, ano e gênero são obrigatórios'
+        message: 'Título, autor, ano e gênero são obrigatórios',
+        missing: {
+          titulo: !titulo,
+          autor: !autor,
+          ano: !ano,
+          genero: !genero
+        }
       });
     }
 
@@ -77,35 +121,22 @@ const uploadMusica = async (req, res) => {
     const arquivoUrl = `/uploads/musics/${path.basename(arquivoPath)}`;
     const arquivoExt = path.extname(arquivoEnviado.originalname).toLowerCase().replace('.', '');
 
-    // Obter informações do áudio (com timeout para evitar travamento)
-    let audioInfo = null;
-    try {
-      // Adicionar timeout de 10 segundos para evitar travamento
-      const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('Timeout ao obter informações do áudio')), 10000);
-      });
-      
-      audioInfo = await Promise.race([
-        getAudioInfo(arquivoPath),
-        timeoutPromise
-      ]);
-      
-      logger.info('Informações do áudio obtidas', { 
-        duracao: audioInfo.duration, 
-        bitrate: audioInfo.bitrate 
-      });
-    } catch (error) {
-      logger.warn('Erro ao obter informações do áudio, usando valores padrão', { 
-        error: error.message,
-        stack: error.stack 
-      });
-      // Usar valores padrão - não bloquear o upload
-      audioInfo = {
-        duration: 0,
-        bitrate: 0,
-        sampleRate: 44100
-      };
-    }
+    // Obter informações do áudio (opcional, não bloqueia)
+    let audioInfo = {
+      duration: 0,
+      bitrate: 0,
+      sampleRate: 44100
+    };
+    
+    // Tentar obter informações do áudio em background (não bloqueia resposta)
+    setImmediate(async () => {
+      try {
+        const info = await getAudioInfo(arquivoPath);
+        console.log('🎵 [UPLOAD LOCAL] Informações de áudio obtidas:', info);
+      } catch (err) {
+        console.log('⚠️ [UPLOAD LOCAL] Não foi possível obter informações do áudio (não crítico)');
+      }
+    });
 
     // Processar capa se fornecida
     let capa = null;
@@ -119,7 +150,7 @@ const uploadMusica = async (req, res) => {
       };
     }
 
-    // Criar música - APENAS informações (sem paths locais no banco)
+    // Criar música para salvar no banco
     const musica = new Musica({
       titulo,
       autor,
@@ -128,11 +159,10 @@ const uploadMusica = async (req, res) => {
       album: album || null,
       letra: letra || null,
       tags: tags ? (Array.isArray(tags) ? tags : tags.split(',').map(t => t.trim())) : [],
-      duracao: audioInfo.duration,
+      duracao: audioInfo.duration > 0 ? audioInfo.duration : 1,
       arquivo: {
         filename: path.basename(arquivoPath),
-        // path: arquivoPath, // NÃO salvar path no banco - apenas local
-        url: arquivoUrl, // URL para acesso via HTTP
+        url: arquivoUrl,
         tamanho: arquivoStats.size,
         formato: arquivoExt,
         bitrate: audioInfo.bitrate,
@@ -140,8 +170,7 @@ const uploadMusica = async (req, res) => {
       },
       capa: capa ? {
         filename: capa.filename,
-        // path: capa.path, // NÃO salvar path no banco
-        url: capa.url // URL para acesso via HTTP
+        url: capa.url
       } : null,
       status: 'ativo',
       visibilidade: visibilidade || 'publico',
@@ -159,115 +188,134 @@ const uploadMusica = async (req, res) => {
       }
     });
     
-    // Armazenar path localmente (não no banco) para uso no servidor
-    musica._localPaths = {
-      arquivo: arquivoPath,
-      capa: capa?.path || null
-    };
-
-    // ENVIAR RESPOSTA PRIMEIRO (antes de salvar no banco)
-    // Isso garante que o cliente receba a resposta mesmo se houver erro no banco
-    const respostaEnviada = false;
+    console.log('💾 [UPLOAD] Arquivo salvo localmente:', arquivoPath);
+    console.log('💾 [UPLOAD] Tamanho:', (arquivoStats.size / (1024 * 1024)).toFixed(2), 'MB');
     
-    // Preparar resposta
+    // Salvar no banco de forma ASSÍNCRONA (não bloqueia resposta)
+    // A resposta será enviada imediatamente, e o salvamento acontece em background
+    setImmediate(async () => {
+      try {
+        console.log('💾 [UPLOAD] Iniciando salvamento no banco (background)...');
+        await Promise.race([
+          musica.save(),
+          new Promise((_, reject) => {
+            setTimeout(() => reject(new Error('Timeout ao salvar no banco (30s)')), 30000);
+          })
+        ]);
+        
+        console.log('✅ [UPLOAD] Música salva no banco com sucesso:', musica._id.toString());
+        
+        // Processar informações de áudio em background se necessário
+        if (musica._processAudioInBackground && musica._audioPath) {
+          setImmediate(async () => {
+            try {
+              const bgAudioInfo = await getAudioInfo(musica._audioPath);
+              await Musica.findByIdAndUpdate(musica._id, {
+                'arquivo.bitrate': bgAudioInfo.bitrate,
+                'arquivo.sampleRate': bgAudioInfo.sampleRate,
+                duracao: bgAudioInfo.duration > 0 ? bgAudioInfo.duration : musica.duracao
+              });
+              console.log('✅ [UPLOAD] Informações de áudio atualizadas em background');
+            } catch (bgError) {
+              console.warn('⚠️ [UPLOAD] Erro ao processar áudio em background:', bgError.message);
+            }
+          });
+        }
+      } catch (dbError) {
+        console.error('❌ [UPLOAD] Erro ao salvar no banco (não crítico):', dbError.message);
+        // Não remover arquivo - ele está salvo localmente e pode ser usado
+        // O usuário pode tentar salvar no banco depois se necessário
+      }
+    });
+
+    // Preparar resposta (banco sendo salvo em background)
     const resposta = {
       success: true,
-      message: 'Música enviada com sucesso',
+      message: 'Música enviada com sucesso! Salvando no banco de dados...',
       data: {
         id: musica._id?.toString() || 'pending',
         titulo: musica.titulo,
         autor: musica.autor,
         url: musica.arquivo.url,
-        capaUrl: musica.capa?.url || null
+        capaUrl: musica.capa?.url || null,
+        tamanho: arquivoStats.size,
+        formato: arquivoExt,
+        status: 'processando' // Indica que está sendo salvo no banco
       }
     };
-    
-    // Salvar no banco de forma assíncrona (não bloqueia resposta)
-    let musicaId = musica._id;
-    
-    // Função para salvar no banco (executada em background)
-    const salvarNoBanco = async () => {
-      try {
-        // Salvar usando o modelo diretamente (apenas no PRIMARY)
-        await musica.save();
-        musicaId = musica._id;
-        
-        logger.info('Música salva no banco com sucesso', {
-          musicaId: musicaId.toString(),
-          titulo: musica.titulo,
-          arquivoUrl: musica.arquivo.url
-        });
-      } catch (dbError) {
-        logger.error('Erro ao salvar música no banco de dados', dbError, {
-          userId: usuarioId.toString(),
-          titulo: musica.titulo,
-          error: dbError.message
-        });
-        
-        // Limpar arquivos em caso de erro no banco
-        if (musica._localPaths?.arquivo && fs.existsSync(musica._localPaths.arquivo)) {
-          try {
-            fs.unlinkSync(musica._localPaths.arquivo);
-          } catch (err) {
-            logger.error('Erro ao remover arquivo após falha no banco', err);
-          }
-        }
-        
-        if (musica._localPaths?.capa && fs.existsSync(musica._localPaths.capa)) {
-          try {
-            fs.unlinkSync(musica._localPaths.capa);
-          } catch (err) {
-            logger.error('Erro ao remover capa após falha no banco', err);
-          }
-        }
-      }
-    };
-    
-    // Executar salvamento em background (não bloqueia)
-    setImmediate(salvarNoBanco);
 
-    // Registrar upload
-    logger.logUpload(usuarioId.toString(), 'musica', arquivoStats.size, true);
+    // Verificar se a resposta já foi enviada antes de enviar
+    if (res.headersSent) {
+      console.warn('⚠️ [UPLOAD LOCAL] Tentativa de enviar resposta duplicada');
+      return;
+    }
 
-    // Enviar resposta IMEDIATAMENTE
-    res.status(201).json(resposta);
+    // Enviar resposta IMEDIATAMENTE (sem esperar banco)
+    const totalTime = Date.now() - startTime;
+    console.log(`📤 [UPLOAD LOCAL] Enviando resposta ao cliente (${totalTime}ms)...`);
     
-    // Garantir que a resposta foi enviada e não há mais código executando
+    try {
+      res.status(201).json(resposta);
+      console.log(`✅ [UPLOAD LOCAL] Resposta enviada com sucesso em ${totalTime}ms`);
+      console.log(`✅ [UPLOAD LOCAL] Arquivo disponível em: ${arquivoUrl}`);
+    } catch (sendError) {
+      console.error('❌ [UPLOAD LOCAL] Erro ao enviar resposta:', sendError);
+    }
     return;
   } catch (error) {
+    const totalTime = Date.now() - startTime;
+    console.error(`❌ [UPLOAD] Erro após ${totalTime}ms:`, error.message);
+    console.error('❌ [UPLOAD] Stack:', error.stack);
+    
     // Limpar arquivos em caso de erro
     const arquivoEnviado = req.files && req.files.arquivo && req.files.arquivo[0] 
       ? req.files.arquivo[0] 
       : (req.file ? req.file : null);
     
-    if (arquivoEnviado && fs.existsSync(arquivoEnviado.path)) {
+    if (arquivoEnviado && arquivoEnviado.path && fs.existsSync(arquivoEnviado.path)) {
       try {
         fs.unlinkSync(arquivoEnviado.path);
+        console.log('🗑️ [UPLOAD] Arquivo removido após erro');
       } catch (err) {
-        console.error('Erro ao remover arquivo:', err);
+        console.error('❌ [UPLOAD] Erro ao remover arquivo:', err);
         logger.error('Erro ao remover arquivo', err);
       }
     }
-    if (req.files && req.files.capa && req.files.capa[0] && fs.existsSync(req.files.capa[0].path)) {
+    if (req.files && req.files.capa && req.files.capa[0] && req.files.capa[0].path && fs.existsSync(req.files.capa[0].path)) {
       try {
         fs.unlinkSync(req.files.capa[0].path);
+        console.log('🗑️ [UPLOAD] Capa removida após erro');
       } catch (err) {
-        console.error('Erro ao remover capa:', err);
+        console.error('❌ [UPLOAD] Erro ao remover capa:', err);
         logger.error('Erro ao remover capa', err);
       }
     }
 
     logger.error('Erro ao fazer upload da música', error, {
       userId: req.user?._id?.toString(),
-      titulo: req.body.titulo
+      titulo: req.body?.titulo,
+      tempoTotal: totalTime
     });
 
-    res.status(500).json({
-      success: false,
-      message: 'Erro ao fazer upload da música',
-      error: error.message,
-      ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
-    });
+    // Verificar se a resposta já foi enviada
+    if (!res.headersSent) {
+      console.log('📤 [UPLOAD] Enviando resposta de erro...');
+      try {
+        res.status(500).json({
+          success: false,
+          message: 'Erro ao fazer upload da música',
+          error: error.message,
+          ...(process.env.NODE_ENV === 'development' && { stack: error.stack })
+        });
+        console.log('✅ [UPLOAD] Resposta de erro enviada');
+      } catch (sendError) {
+        console.error('❌ [UPLOAD] Erro crítico ao enviar resposta de erro:', sendError);
+      }
+    } else {
+      // Se a resposta já foi enviada, apenas logar o erro
+      console.warn('⚠️ [UPLOAD] Erro após resposta já enviada');
+      logger.error('Erro após resposta enviada', error);
+    }
   }
 };
 

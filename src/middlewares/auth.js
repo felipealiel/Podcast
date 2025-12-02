@@ -165,7 +165,13 @@ const auth = async (req, res, next) => {
  */
 const optionalAuth = async (req, res, next) => {
   try {
-    const token = req.header('Authorization')?.replace('Bearer ', '');
+    // Tentar pegar token do header primeiro
+    let token = req.header('Authorization')?.replace('Bearer ', '');
+    
+    // Se não tiver no header, tentar na query string (útil para elementos Audio)
+    if (!token && req.query.token) {
+      token = req.query.token;
+    }
 
     if (token) {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
@@ -179,6 +185,7 @@ const optionalAuth = async (req, res, next) => {
 
     next();
   } catch (error) {
+    // Em caso de erro, continuar sem autenticação (é opcional)
     next();
   }
 };

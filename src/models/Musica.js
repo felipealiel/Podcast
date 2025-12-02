@@ -60,7 +60,7 @@ const musicaSchema = new mongoose.Schema({
     },
     path: {
       type: String,
-      required: true
+      required: false // Path local não é salvo no banco (apenas usado no servidor)
     },
     url: {
       type: String,

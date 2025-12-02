@@ -174,7 +174,7 @@
                 <h1 style="color: #fff; margin-bottom: 10px;">🎵 Área do Produtor</h1>
                 <p style="color: #ccc;">Gerencie suas músicas e uploads</p>
             </div>
-            <button id="logoutBtn" onclick="logout()" style="padding: 12px 24px; background: #ea4335; color: #fff; border: none; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s;">
+            <button id="logoutBtn" style="padding: 12px 24px; background: #ea4335; color: #fff; border: none; border-radius: 5px; font-size: 14px; font-weight: 600; cursor: pointer; transition: all 0.3s;">
                 Sair
             </button>
         </header>
@@ -314,36 +314,122 @@
             e.preventDefault();
             
             const btn = document.getElementById('upload-btn');
+            const originalText = btn.textContent;
             btn.disabled = true;
             btn.textContent = 'Enviando...';
 
             const formData = new FormData(this);
             
+            // Verificar tamanho do arquivo antes de enviar
+            const arquivoInput = document.getElementById('arquivo');
+            if (arquivoInput.files.length > 0) {
+                const arquivo = arquivoInput.files[0];
+                const tamanhoMB = arquivo.size / (1024 * 1024);
+                console.log(`📤 Iniciando upload: ${arquivo.name} (${tamanhoMB.toFixed(2)} MB)`);
+                
+                if (tamanhoMB > 100) {
+                    showAlert('Arquivo muito grande. Tamanho máximo: 100MB', 'error');
+                    btn.disabled = false;
+                    btn.textContent = originalText;
+                    return;
+                }
+            }
+            
+            // NÃO usar AbortController - deixar o servidor gerenciar o timeout
+            // O servidor já tem timeout de 5 minutos configurado
+            let response = null;
+            
             try {
-                const response = await fetch(`${API_URL}/musicas/upload`, {
+                console.log('🔄 Enviando requisição para o servidor...');
+                
+                response = await fetch(`${API_URL}/musicas/upload`, {
                     method: 'POST',
                     headers: {
                         'Authorization': `Bearer ${token}`
+                        // NÃO adicionar Content-Type - o browser define automaticamente com boundary para FormData
                     },
                     body: formData
+                    // Removido signal para evitar abort prematuro
                 });
 
-                const data = await response.json();
+                console.log('✅ Resposta recebida do servidor:', response.status, response.statusText);
 
-                if (response.ok) {
+                // Verificar se a resposta é JSON
+                let data;
+                const contentType = response.headers.get('content-type');
+                
+                console.log('📥 [FRONTEND] Status da resposta:', response.status, response.statusText);
+                console.log('📥 [FRONTEND] Content-Type:', contentType);
+                
+                if (contentType && contentType.includes('application/json')) {
+                    data = await response.json();
+                    console.log('📦 [FRONTEND] Dados recebidos:', data);
+                } else {
+                    // Se não for JSON, tentar ler como texto para debug
+                    const text = await response.text();
+                    console.error('❌ [FRONTEND] Resposta não é JSON:', text);
+                    throw new Error('Resposta inválida do servidor: ' + text.substring(0, 100));
+                }
+
+                if (response.ok && data.success) {
+                    console.log('✅ [FRONTEND] Upload bem-sucedido!');
                     showAlert('Música enviada com sucesso!', 'success');
                     this.reset();
+                    document.getElementById('arquivo-label').textContent = 'Clique para selecionar arquivo de áudio (MP3, WAV, AAC, etc.)';
                     document.getElementById('arquivo-label').classList.remove('has-file');
+                    document.getElementById('capa-label').textContent = 'Clique para selecionar imagem da capa';
                     document.getElementById('capa-label').classList.remove('has-file');
                     loadMusicas();
                 } else {
-                    showAlert(data.message || 'Erro ao fazer upload', 'error');
+                    // Resposta de erro (400, 500, etc)
+                    const errorMsg = data.message || data.error?.message || data.error || 'Erro ao fazer upload';
+                    console.error('❌ [FRONTEND] Erro no upload:', {
+                        status: response.status,
+                        statusText: response.statusText,
+                        data: data
+                    });
+                    showAlert(errorMsg, 'error');
                 }
             } catch (error) {
-                showAlert('Erro ao fazer upload: ' + error.message, 'error');
+                console.error('❌ Erro capturado:', error);
+                
+                let errorMsg = 'Erro ao fazer upload';
+                
+                if (error.name === 'AbortError' || error.name === 'AbortController') {
+                    errorMsg = 'Upload cancelado. Verifique sua conexão e tente novamente.';
+                    console.error('⚠️ Upload foi abortado - possível problema de conexão ou timeout');
+                } else if (error.message) {
+                    if (error.message.includes('Failed to fetch') || error.message.includes('NetworkError')) {
+                        errorMsg = 'Erro de conexão. Verifique se o servidor está rodando e sua conexão com a internet.';
+                    } else if (error.message.includes('ERR_CONNECTION')) {
+                        errorMsg = 'Conexão com o servidor foi perdida. Tente novamente.';
+                    } else {
+                        errorMsg = 'Erro ao fazer upload: ' + error.message;
+                    }
+                } else if (error instanceof TypeError) {
+                    if (error.message.includes('fetch')) {
+                        errorMsg = 'Erro de conexão. Verifique se o servidor está rodando em http://localhost:3000';
+                    } else {
+                        errorMsg = 'Erro de tipo: ' + error.message;
+                    }
+                }
+                
+                // Se a resposta foi recebida mas houve erro ao processar
+                if (response && !response.ok) {
+                    errorMsg = `Erro do servidor (${response.status}): ${errorMsg}`;
+                }
+                
+                showAlert(errorMsg, 'error');
+                console.error('❌ Detalhes do erro:', {
+                    name: error.name,
+                    message: error.message,
+                    stack: error.stack
+                });
             } finally {
+                // Sempre restaurar o botão, mesmo em caso de erro
                 btn.disabled = false;
-                btn.textContent = 'Fazer Upload';
+                btn.textContent = originalText;
+                console.log('🔄 Botão restaurado');
             }
         });
 
@@ -389,12 +475,25 @@
                             <p><strong>Status:</strong> ${musica.status}</p>
                         </div>
                         <div class="musica-actions">
-                            <button class="btn-action btn-edit" onclick="editMusica('${musica._id}')">Editar</button>
-                            <button class="btn-action btn-delete" onclick="deleteMusica('${musica._id}')">Deletar</button>
+                            <button class="btn-action btn-edit" data-musica-id="${musica._id}">Editar</button>
+                            <button class="btn-action btn-delete" data-musica-id="${musica._id}">Deletar</button>
                         </div>
                     </div>
                 `).join('') +
                 '</div>';
+            
+            // Adicionar event listeners aos botões de ação
+            container.querySelectorAll('.btn-edit').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    editMusica(this.getAttribute('data-musica-id'));
+                });
+            });
+            
+            container.querySelectorAll('.btn-delete').forEach(btn => {
+                btn.addEventListener('click', function() {
+                    deleteMusica(this.getAttribute('data-musica-id'));
+                });
+            });
         }
 
         function deleteMusica(id) {
@@ -449,24 +548,37 @@
             window.location.href = '/index.html';
         }
 
-        // Tornar função acessível globalmente
-        window.logout = logout;
-
-        // Adicionar hover effect ao botão de logout quando o DOM estiver pronto
-        (function() {
+        // Adicionar event listener ao botão de logout
+        // Usar função que funciona mesmo se o DOM já estiver carregado
+        function setupLogoutButton() {
             const logoutBtn = document.getElementById('logoutBtn');
             if (logoutBtn) {
-                logoutBtn.addEventListener('mouseenter', function() {
+                // Remover listeners anteriores se houver
+                const newLogoutBtn = logoutBtn.cloneNode(true);
+                logoutBtn.parentNode.replaceChild(newLogoutBtn, logoutBtn);
+                
+                // Event listener para click
+                newLogoutBtn.addEventListener('click', logout);
+                
+                // Hover effects
+                newLogoutBtn.addEventListener('mouseenter', function() {
                     this.style.background = '#d33b2c';
                     this.style.transform = 'translateY(-2px)';
                 });
                 
-                logoutBtn.addEventListener('mouseleave', function() {
+                newLogoutBtn.addEventListener('mouseleave', function() {
                     this.style.background = '#ea4335';
                     this.style.transform = 'translateY(0)';
                 });
             }
-        })();
+        }
+        
+        // Executar quando o DOM estiver pronto ou imediatamente se já estiver
+        if (document.readyState === 'loading') {
+            document.addEventListener('DOMContentLoaded', setupLogoutButton);
+        } else {
+            setupLogoutButton();
+        }
 
         // Load musicas on page load
         loadMusicas();

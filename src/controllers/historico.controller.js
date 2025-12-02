@@ -116,11 +116,23 @@ const meuHistorico = async (req, res) => {
     const usuarioId = req.user._id;
     const { tipoConteudo, limit = 50, skip = 0 } = req.query;
 
+    console.log('📋 [HISTORICO] Buscando histórico para usuário:', usuarioId);
+
     const historico = await Historico.buscarPorUsuario(usuarioId, {
       tipoConteudo,
       limit: parseInt(limit),
       skip: parseInt(skip)
     });
+
+    console.log('📋 [HISTORICO] Histórico encontrado:', historico.length, 'itens');
+    if (historico.length > 0) {
+      console.log('📋 [HISTORICO] Primeiro item:', {
+        _id: historico[0]._id,
+        conteudoId: historico[0].conteudoId?._id || historico[0].conteudoId,
+        conteudoPopulado: !!historico[0].conteudoId?.titulo,
+        titulo: historico[0].conteudoId?.titulo
+      });
+    }
 
     const query = { usuarioId };
     if (tipoConteudo) query.tipoConteudo = tipoConteudo;
@@ -137,6 +149,7 @@ const meuHistorico = async (req, res) => {
       }
     });
   } catch (error) {
+    console.error('❌ [HISTORICO] Erro ao buscar histórico:', error);
     res.status(500).json({
       success: false,
       message: 'Erro ao buscar histórico',

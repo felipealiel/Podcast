@@ -1,5 +1,18 @@
 const mongoose = require('mongoose');
 
+// Importar modelos para populate manual
+let Musica, Playlist;
+try {
+  Musica = mongoose.model('Musica');
+} catch (e) {
+  Musica = require('./Musica');
+}
+try {
+  Playlist = mongoose.model('Playlist');
+} catch (e) {
+  Playlist = require('./Playlist');
+}
+
 const historicoSchema = new mongoose.Schema({
   // Usuário que reproduziu
   usuarioId: {
@@ -103,7 +116,7 @@ historicoSchema.virtual('completa').get(function() {
 });
 
 // Método estático para buscar histórico de um usuário
-historicoSchema.statics.buscarPorUsuario = function(usuarioId, options = {}) {
+historicoSchema.statics.buscarPorUsuario = async function(usuarioId, options = {}) {
   const { tipoConteudo, limit = 50, skip = 0 } = options;
   
   const query = { usuarioId };
@@ -111,11 +124,38 @@ historicoSchema.statics.buscarPorUsuario = function(usuarioId, options = {}) {
     query.tipoConteudo = tipoConteudo;
   }
   
-  return this.find(query)
-    .sort({ 'reproducao.dataInicio': -1 })
+  const historicos = await this.find(query)
+    .sort({ 'reproducao.dataInicio': -1, createdAt: -1 })
     .limit(limit)
     .skip(skip)
-    .populate('conteudoId');
+    .lean(); // Usar lean() para melhor performance
+  
+  // Popular manualmente os conteúdos
+  const Musica = mongoose.model('Musica');
+  const Playlist = mongoose.model('Playlist');
+  
+  for (const item of historicos) {
+    if (item.conteudoId && item.tipoConteudoModel) {
+      try {
+        if (item.tipoConteudoModel === 'Musica') {
+          const musica = await Musica.findById(item.conteudoId)
+            .select('titulo autor ano genero album duracao capa arquivo stats')
+            .lean();
+          item.conteudoId = musica;
+        } else if (item.tipoConteudoModel === 'Playlist') {
+          const playlist = await Playlist.findById(item.conteudoId)
+            .select('nomePlaylist descricao stats')
+            .lean();
+          item.conteudoId = playlist;
+        }
+      } catch (error) {
+        console.error('Erro ao popular conteúdo:', error);
+        // Manter o ID se não conseguir popular
+      }
+    }
+  }
+  
+  return historicos;
 };
 
 // Método estático para buscar reproduções recentes

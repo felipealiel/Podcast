@@ -172,3 +172,35 @@ loginForm.addEventListener('submit', () => {
     }
 });
 
+// Event listeners para botões de login social
+window.addEventListener('DOMContentLoaded', () => {
+    const googleBtn = document.getElementById('googleLoginBtn');
+    const facebookBtn = document.getElementById('facebookLoginBtn');
+    const appleBtn = document.getElementById('appleLoginBtn');
+    const phoneBtn = document.getElementById('phoneLoginBtn');
+    
+    if (googleBtn) {
+        googleBtn.addEventListener('click', () => {
+            alert('Login com Google em breve!');
+        });
+    }
+    
+    if (facebookBtn) {
+        facebookBtn.addEventListener('click', () => {
+            alert('Login com Facebook em breve!');
+        });
+    }
+    
+    if (appleBtn) {
+        appleBtn.addEventListener('click', () => {
+            alert('Login com Apple em breve!');
+        });
+    }
+    
+    if (phoneBtn) {
+        phoneBtn.addEventListener('click', () => {
+            alert('Login com telefone em breve!');
+        });
+    }
+});
+
