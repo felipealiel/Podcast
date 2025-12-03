@@ -509,7 +509,8 @@ const buscarMusica = async (req, res) => {
     const { id } = req.params;
 
     const musica = await Musica.findById(id)
-      .populate('upload.usuarioId', 'nomeUsuario profile.avatar');
+      .populate('upload.usuarioId', 'nomeUsuario profile.avatar')
+      .populate('comentarios.usuarioId', 'nomeUsuario profile.avatar');
 
     if (!musica || musica.status !== 'ativo') {
       return res.status(404).json({
@@ -540,11 +541,151 @@ const buscarMusica = async (req, res) => {
   }
 };
 
+/**
+ * Adicionar comentário a uma música
+ */
+const adicionarComentario = async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { texto } = req.body;
+    const usuarioId = req.user._id;
+
+    if (!texto || texto.trim().length === 0) {
+      return res.status(400).json({
+        success: false,
+        message: 'Texto do comentário é obrigatório'
+      });
+    }
+
+    if (texto.length > 500) {
+      return res.status(400).json({
+        success: false,
+        message: 'Comentário não pode ter mais de 500 caracteres'
+      });
+    }
+
+    const musica = await Musica.findById(id);
+
+    if (!musica || musica.status !== 'ativo') {
+      return res.status(404).json({
+        success: false,
+        message: 'Música não encontrada'
+      });
+    }
+
+    // Verificar visibilidade
+    if (musica.visibilidade === 'privado' && 
+        musica.upload.usuarioId.toString() !== usuarioId.toString()) {
+      return res.status(403).json({
+        success: false,
+        message: 'Esta música é privada'
+      });
+    }
+
+    // Adicionar comentário
+    const novoComentario = {
+      usuarioId,
+      texto: texto.trim(),
+      dataComentario: new Date()
+    };
+
+    musica.comentarios.push(novoComentario);
+
+    // Salvar em todos os clusters
+    await databaseManager.writeToAllClusters(
+      'musicas',
+      'updateOne',
+      { _id: musica._id },
+      { $push: { comentarios: novoComentario } }
+    );
+
+    // Buscar música atualizada com comentário populado
+    const musicaAtualizada = await Musica.findById(id)
+      .populate('comentarios.usuarioId', 'nomeUsuario profile.avatar');
+
+    const comentarioAdicionado = musicaAtualizada.comentarios[musicaAtualizada.comentarios.length - 1];
+
+    res.status(201).json({
+      success: true,
+      message: 'Comentário adicionado com sucesso',
+      data: comentarioAdicionado
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao adicionar comentário',
+      error: error.message
+    });
+  }
+};
+
+/**
+ * Remover comentário de uma música
+ */
+const removerComentario = async (req, res) => {
+  try {
+    const { id, comentarioId } = req.params;
+    const usuarioId = req.user._id;
+
+    const musica = await Musica.findById(id);
+
+    if (!musica || musica.status !== 'ativo') {
+      return res.status(404).json({
+        success: false,
+        message: 'Música não encontrada'
+      });
+    }
+
+    // Encontrar comentário
+    const comentario = musica.comentarios.id(comentarioId);
+
+    if (!comentario) {
+      return res.status(404).json({
+        success: false,
+        message: 'Comentário não encontrado'
+      });
+    }
+
+    // Verificar permissão (usuário que comentou ou admin)
+    if (comentario.usuarioId.toString() !== usuarioId.toString() && 
+        req.user.account.role !== 'admin') {
+      return res.status(403).json({
+        success: false,
+        message: 'Você não tem permissão para remover este comentário'
+      });
+    }
+
+    // Remover comentário
+    musica.comentarios.pull(comentarioId);
+
+    // Salvar em todos os clusters
+    await databaseManager.writeToAllClusters(
+      'musicas',
+      'updateOne',
+      { _id: musica._id },
+      { $pull: { comentarios: { _id: comentarioId } } }
+    );
+
+    res.json({
+      success: true,
+      message: 'Comentário removido com sucesso'
+    });
+  } catch (error) {
+    res.status(500).json({
+      success: false,
+      message: 'Erro ao remover comentário',
+      error: error.message
+    });
+  }
+};
+
 module.exports = {
   uploadMusica,
   minhasMusicas,
   atualizarMusica,
   deletarMusica,
-  buscarMusica
+  buscarMusica,
+  adicionarComentario,
+  removerComentario
 };
 

@@ -107,7 +107,10 @@ const buscarMusicas = async (req, res) => {
     }
 
     // Filtros
-    if (genero) query.genero = genero;
+    if (genero) {
+      // Normalizar gênero para busca case-insensitive
+      query.genero = new RegExp(`^${genero}$`, 'i');
+    }
     if (autor) query.autor = new RegExp(autor, 'i');
     if (album) query.album = new RegExp(album, 'i');
     

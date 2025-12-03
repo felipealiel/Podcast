@@ -169,6 +169,21 @@
             color: #fff;
         }
         
+        .btn-comments {
+            padding: 10px 15px;
+            background: transparent;
+            border: 1px solid #1db954;
+            color: #1db954;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: all 0.2s;
+        }
+        
+        .btn-comments:hover {
+            background: #1db954;
+            color: #fff;
+        }
+        
         /* Modal de playlist */
         .playlist-modal {
             position: fixed;
@@ -789,22 +804,43 @@
         function loadCategories() {
             const grid = document.getElementById('categoriesGrid');
             grid.innerHTML = generos.map(genero => `
-                <div class="category-card ${genero.classe}" onclick="selecionarGenero('${genero.nome}')">
+                <div class="category-card ${genero.classe}" data-genero="${genero.nome}">
                     <div style="font-size: 48px; margin-bottom: 8px;">${genero.emoji}</div>
                     <div>${genero.nome}</div>
                 </div>
             `).join('');
+            
+            // Adicionar event listeners para os cards de categoria
+            grid.querySelectorAll('.category-card').forEach(card => {
+                card.style.cursor = 'pointer';
+                card.addEventListener('click', function(e) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    const genero = this.getAttribute('data-genero');
+                    console.log('🖱️ Card clicado, gênero:', genero);
+                    if (genero) {
+                        selecionarGenero(genero);
+                    } else {
+                        console.error('❌ Gênero não encontrado no card');
+                    }
+                });
+            });
         }
         
         // Selecionar gênero
         function selecionarGenero(genero) {
+            console.log('🎵 Selecionando gênero:', genero);
             currentGenero = genero;
             currentView = 'musicas';
             
             // Mostrar seção de músicas e esconder categorias
-            document.getElementById('categoriesSection').classList.add('hidden');
-            document.getElementById('musicasSection').classList.remove('hidden');
-            document.getElementById('generoTitle').textContent = genero;
+            const categoriesSection = document.getElementById('categoriesSection');
+            const musicasSection = document.getElementById('musicasSection');
+            const generoTitle = document.getElementById('generoTitle');
+            
+            if (categoriesSection) categoriesSection.classList.add('hidden');
+            if (musicasSection) musicasSection.classList.remove('hidden');
+            if (generoTitle) generoTitle.textContent = genero;
             
             // Buscar músicas do gênero
             buscarPorGenero(genero);
@@ -815,6 +851,11 @@
             currentGenero = null;
             currentView = 'categories';
             
+            // Limpar parâmetros da URL
+            const url = new URL(window.location);
+            url.searchParams.delete('playlist');
+            window.history.replaceState({}, '', url);
+            
             // Mostrar categorias e esconder músicas
             document.getElementById('categoriesSection').classList.remove('hidden');
             document.getElementById('musicasSection').classList.add('hidden');
@@ -822,31 +863,78 @@
         
         // Buscar por gênero
         async function buscarPorGenero(genero) {
+            console.log('🔍 Buscando músicas do gênero:', genero);
             const container = document.getElementById('musicas-container');
+            if (!container) {
+                console.error('❌ Container de músicas não encontrado');
+                return;
+            }
+            
             container.innerHTML = '<div class="loading">Carregando músicas...</div>';
             
             try {
-                const ordenar = document.getElementById('ordenarFilter').value;
-                const url = `${API_URL}/busca/musicas?genero=${encodeURIComponent(genero)}&limit=50&ordenar=${ordenar}`;
+                const ordenar = document.getElementById('ordenarFilter')?.value || 'relevancia';
+                // Normalizar o gênero para corresponder ao banco (primeira letra maiúscula, resto minúscula)
+                const generoNormalizado = genero.charAt(0).toUpperCase() + genero.slice(1).toLowerCase();
+                console.log('📝 Gênero normalizado:', generoNormalizado);
                 
-                const response = await fetch(url, {
+                // Primeiro, tentar buscar todas as músicas e filtrar no frontend (mais confiável)
+                console.log('🌐 Buscando todas as músicas...');
+                const allResponse = await fetch(`${API_URL}/musicas?limit=200`, {
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
                 });
                 
-                const data = await response.json();
+                const allData = await allResponse.json();
+                console.log('📦 Resposta recebida:', allData);
                 
-                if (response.ok && data.success) {
-                    displayMusicas(data.data || []);
+                if (allResponse.ok && allData.success && allData.data) {
+                    // Filtrar por gênero (case insensitive)
+                    const musicasFiltradas = allData.data.filter(m => {
+                        if (!m.genero) return false;
+                        const generoMusica = m.genero.toString().toLowerCase().trim();
+                        const generoBuscado = generoNormalizado.toLowerCase().trim();
+                        return generoMusica === generoBuscado;
+                    });
+                    
+                    console.log(`✅ Encontradas ${musicasFiltradas.length} músicas do gênero ${generoNormalizado}`);
+                    
+                    if (musicasFiltradas.length > 0) {
+                        displayMusicas(musicasFiltradas);
+                    } else {
+                        container.innerHTML = 
+                            '<div class="empty-state"><h2>Nenhuma música encontrada neste gênero</h2><p>Tente outro gênero</p></div>';
+                    }
                 } else {
-                    container.innerHTML = 
-                        '<div class="empty-state"><h2>Nenhuma música encontrada neste gênero</h2><p>Tente outro gênero</p></div>';
+                    // Fallback: tentar busca por API de busca
+                    console.log('⚠️ Buscando via API de busca...');
+                    const url = `${API_URL}/busca/musicas?genero=${encodeURIComponent(generoNormalizado)}&limit=50&ordenar=${ordenar}`;
+                    const response = await fetch(url, {
+                        headers: {
+                            'Authorization': `Bearer ${token}`
+                        }
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (response.ok && data.success) {
+                        const musicas = data.data || [];
+                        if (musicas.length > 0) {
+                            displayMusicas(musicas);
+                        } else {
+                            container.innerHTML = 
+                                '<div class="empty-state"><h2>Nenhuma música encontrada neste gênero</h2><p>Tente outro gênero</p></div>';
+                        }
+                    } else {
+                        container.innerHTML = 
+                            '<div class="empty-state"><h2>Nenhuma música encontrada neste gênero</h2><p>Tente outro gênero</p></div>';
+                    }
                 }
             } catch (error) {
-                console.error('Erro ao buscar músicas:', error);
+                console.error('❌ Erro ao buscar músicas:', error);
                 container.innerHTML = 
-                    '<div class="empty-state"><h2>Erro ao buscar músicas</h2></div>';
+                    '<div class="empty-state"><h2>Erro ao buscar músicas</h2><p>' + error.message + '</p></div>';
             }
         }
         
@@ -855,9 +943,63 @@
             showCategories();
         }
         
+        // Verificar se há parâmetro de playlist na URL
+        const urlParams = new URLSearchParams(window.location.search);
+        const playlistId = urlParams.get('playlist');
+        
         // Inicializar
         initPlayer();
-        loadCategories(); // Carregar categorias por padrão
+        
+        if (playlistId) {
+            // Se tem playlist na URL, carregar músicas da playlist
+            carregarPlaylist(playlistId);
+        } else {
+            // Senão, carregar categorias por padrão
+            loadCategories();
+        }
+        
+        // Função para carregar músicas de uma playlist
+        async function carregarPlaylist(playlistId) {
+            try {
+                const response = await fetch(`${API_URL}/playlists/${playlistId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success && data.data) {
+                    const playlist = data.data;
+                    const musicas = playlist.musicas || [];
+                    
+                    // Mostrar seção de músicas
+                    document.getElementById('categoriesSection').classList.add('hidden');
+                    document.getElementById('musicasSection').classList.remove('hidden');
+                    document.getElementById('generoTitle').textContent = playlist.nomePlaylist || 'Playlist';
+                    
+                    // Converter músicas da playlist para o formato esperado
+                    const musicasFormatadas = musicas.map(item => {
+                        const musica = item.musicaId || item;
+                        return musica;
+                    }).filter(m => m); // Remover nulos
+                    
+                    if (musicasFormatadas.length > 0) {
+                        displayMusicas(musicasFormatadas);
+                    } else {
+                        document.getElementById('musicas-container').innerHTML = 
+                            '<div class="empty-state"><h2>Esta playlist está vazia</h2></div>';
+                    }
+                } else {
+                    alert('Erro ao carregar playlist');
+                    loadCategories();
+                }
+            } catch (error) {
+                console.error('Erro ao carregar playlist:', error);
+                alert('Erro ao carregar playlist');
+                loadCategories();
+            }
+        }
         
         // Event listeners
         document.getElementById('searchBtn').addEventListener('click', buscarMusicas);
@@ -871,6 +1013,12 @@
                 buscarPorGenero(currentGenero);
             }
         });
+        
+        // Botão voltar
+        const backBtn = document.getElementById('backBtn');
+        if (backBtn) {
+            backBtn.addEventListener('click', showCategories);
+        }
         document.getElementById('backBtn').addEventListener('click', function() {
             showCategories();
         });
@@ -883,6 +1031,7 @@
         });
         
         // Exportar funções para uso global
+        // Disponibilizar globalmente (caso necessário)
         window.selecionarGenero = selecionarGenero;
         
         async function buscarMusicas() {
@@ -955,6 +1104,14 @@
                             </button>
                             <button class="btn-favorite" data-musica-id="${musica._id}" data-is-favoritada="false">♡</button>
                             <button class="btn-add-playlist" data-musica-id="${musica._id}" title="Adicionar à playlist">➕</button>
+                            <button class="btn-comments" data-musica-id="${musica._id}" title="Ver comentários">💬</button>
+                        </div>
+                        <div class="comentarios-section" id="comentarios-${musica._id}" style="display: none; margin-top: 15px; padding-top: 15px; border-top: 1px solid #333;">
+                            <div class="comentarios-list" id="comentarios-list-${musica._id}"></div>
+                            <div class="adicionar-comentario" style="margin-top: 10px;">
+                                <textarea id="comentario-text-${musica._id}" placeholder="Escreva um comentário..." style="width: 100%; padding: 8px; border: 1px solid #333; border-radius: 5px; background: #2a2a2a; color: #fff; resize: vertical; min-height: 60px; font-family: inherit;"></textarea>
+                                <button class="btn-enviar-comentario" data-musica-id="${musica._id}" style="margin-top: 8px; padding: 8px 16px; background: #1db954; color: #fff; border: none; border-radius: 5px; cursor: pointer;">Enviar</button>
+                            </div>
                         </div>
                     </div>
                 `;
@@ -1003,6 +1160,24 @@
                     e.stopPropagation();
                     const musicaId = this.getAttribute('data-musica-id');
                     adicionarAPlaylist(musicaId);
+                });
+            });
+            
+            // Event listeners para botões de comentários
+            container.querySelectorAll('.btn-comments').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const musicaId = this.getAttribute('data-musica-id');
+                    toggleComentarios(musicaId);
+                });
+            });
+            
+            // Event listeners para enviar comentários
+            container.querySelectorAll('.btn-enviar-comentario').forEach(btn => {
+                btn.addEventListener('click', function(e) {
+                    e.stopPropagation();
+                    const musicaId = this.getAttribute('data-musica-id');
+                    enviarComentario(musicaId);
                 });
             });
         }
@@ -1180,6 +1355,116 @@
             } catch (error) {
                 console.error('Erro ao buscar playlists:', error);
                 alert('Erro ao carregar playlists');
+            }
+        }
+        
+        // Toggle comentários (mostrar/esconder)
+        async function toggleComentarios(musicaId) {
+            const comentariosSection = document.getElementById(`comentarios-${musicaId}`);
+            if (!comentariosSection) return;
+            
+            if (comentariosSection.style.display === 'none') {
+                comentariosSection.style.display = 'block';
+                await carregarComentarios(musicaId);
+            } else {
+                comentariosSection.style.display = 'none';
+            }
+        }
+        
+        // Carregar comentários de uma música
+        async function carregarComentarios(musicaId) {
+            const comentariosList = document.getElementById(`comentarios-list-${musicaId}`);
+            if (!comentariosList) return;
+            
+            comentariosList.innerHTML = '<div style="color: #b3b3b3; padding: 10px;">Carregando comentários...</div>';
+            
+            try {
+                const response = await fetch(`${API_URL}/musicas/${musicaId}`, {
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success && data.data) {
+                    const musica = data.data;
+                    const comentarios = musica.comentarios || [];
+                    
+                    if (comentarios.length === 0) {
+                        comentariosList.innerHTML = '<div style="color: #b3b3b3; padding: 10px;">Nenhum comentário ainda. Seja o primeiro a comentar!</div>';
+                    } else {
+                        comentariosList.innerHTML = comentarios.map(comentario => {
+                            const usuario = comentario.usuarioId || {};
+                            const nomeUsuario = usuario.nomeUsuario || 'Usuário';
+                            const dataComentario = comentario.dataComentario ? new Date(comentario.dataComentario) : new Date();
+                            const dataFormatada = dataComentario.toLocaleDateString('pt-BR', { 
+                                day: '2-digit', 
+                                month: '2-digit', 
+                                year: 'numeric',
+                                hour: '2-digit',
+                                minute: '2-digit'
+                            });
+                            
+                            return `
+                                <div class="comentario-item" style="padding: 10px; margin-bottom: 10px; background: #2a2a2a; border-radius: 5px;">
+                                    <div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+                                        <strong style="color: #1db954;">${nomeUsuario}</strong>
+                                        <span style="color: #b3b3b3; font-size: 12px;">${dataFormatada}</span>
+                                    </div>
+                                    <p style="color: #fff; margin: 0;">${comentario.texto}</p>
+                                </div>
+                            `;
+                        }).join('');
+                    }
+                } else {
+                    comentariosList.innerHTML = '<div style="color: #ea4335; padding: 10px;">Erro ao carregar comentários</div>';
+                }
+            } catch (error) {
+                console.error('Erro ao carregar comentários:', error);
+                comentariosList.innerHTML = '<div style="color: #ea4335; padding: 10px;">Erro ao carregar comentários</div>';
+            }
+        }
+        
+        // Enviar comentário
+        async function enviarComentario(musicaId) {
+            const textarea = document.getElementById(`comentario-text-${musicaId}`);
+            if (!textarea) return;
+            
+            const texto = textarea.value.trim();
+            
+            if (!texto) {
+                alert('Por favor, escreva um comentário');
+                return;
+            }
+            
+            if (texto.length > 500) {
+                alert('Comentário não pode ter mais de 500 caracteres');
+                return;
+            }
+            
+            try {
+                const response = await fetch(`${API_URL}/musicas/${musicaId}/comentarios`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ texto })
+                });
+                
+                const data = await response.json();
+                
+                if (response.ok && data.success) {
+                    textarea.value = '';
+                    // Recarregar comentários
+                    await carregarComentarios(musicaId);
+                } else {
+                    alert(data.message || 'Erro ao adicionar comentário');
+                }
+            } catch (error) {
+                console.error('Erro ao enviar comentário:', error);
+                alert('Erro ao enviar comentário');
             }
         }
         

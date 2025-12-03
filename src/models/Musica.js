@@ -206,7 +206,26 @@ const musicaSchema = new mongoose.Schema({
     distribuidora: String,
     gravadora: String,
     numeroRegistro: String
-  }
+  },
+  
+  // Comentários
+  comentarios: [{
+    usuarioId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true
+    },
+    texto: {
+      type: String,
+      required: [true, 'Texto do comentário é obrigatório'],
+      trim: true,
+      maxlength: [500, 'Comentário não pode ter mais de 500 caracteres']
+    },
+    dataComentario: {
+      type: Date,
+      default: Date.now
+    }
+  }]
 }, {
   timestamps: true,
   toJSON: { virtuals: true },

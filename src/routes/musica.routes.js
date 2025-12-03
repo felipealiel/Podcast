@@ -9,8 +9,6 @@ const { uploadMusicWithCover } = require('../utils/upload');
  * RF02 - Rotas de Upload e Gerenciamento de Músicas
  */
 
-// Rotas públicas
-router.get('/:id', optionalAuth, musicaController.buscarMusica);
 
 // Middleware para tratar erros do multer
 const handleMulterError = (err, req, res, next) => {
@@ -144,6 +142,15 @@ const uploadMiddleware = (req, res, next) => {
 // Rotas para produtores (requer autenticação e role de produtor)
 router.post('/upload', auth, isProducer, uploadMiddleware, musicaController.uploadMusica);
 router.get('/minhas/listar', auth, isProducer, musicaController.minhasMusicas);
+
+// Rotas de comentários (devem vir antes de /:id para evitar conflito)
+router.post('/:id/comentarios', auth, musicaController.adicionarComentario);
+router.delete('/:id/comentarios/:comentarioId', auth, musicaController.removerComentario);
+
+// Rotas públicas (buscar música)
+router.get('/:id', optionalAuth, musicaController.buscarMusica);
+
+// Rotas para produtores (atualizar e deletar)
 router.put('/:id', auth, isProducer, musicaController.atualizarMusica);
 router.delete('/:id', auth, isProducer, musicaController.deletarMusica);
 

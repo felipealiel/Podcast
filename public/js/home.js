@@ -142,7 +142,7 @@ async function loadPlaylists() {
             playlistsScroll.querySelectorAll('[data-playlist-id]').forEach(card => {
                 card.addEventListener('click', async () => {
                     const playlistId = card.getAttribute('data-playlist-id');
-                    await playPlaylist(playlistId);
+                    await mostrarPlaylist(playlistId);
                 });
             });
         } else {
@@ -209,8 +209,16 @@ async function loadSidebarPlaylists() {
 
         if (response.ok && data.success && data.data.length > 0) {
             sidebarPlaylists.innerHTML = data.data.map(playlist => `
-                <a href="/playlist.html?id=${playlist._id}" class="playlist-link">${playlist.nomePlaylist}</a>
+                <div class="playlist-link" data-playlist-id="${playlist._id}" style="cursor: pointer;">${playlist.nomePlaylist}</div>
             `).join('');
+            
+            // Adicionar event listeners para as playlists da sidebar
+            sidebarPlaylists.querySelectorAll('[data-playlist-id]').forEach(link => {
+                link.addEventListener('click', async () => {
+                    const playlistId = link.getAttribute('data-playlist-id');
+                    await mostrarPlaylist(playlistId);
+                });
+            });
         } else {
             sidebarPlaylists.innerHTML = '<div class="playlist-link" style="color: #b3b3b3;">Nenhuma playlist</div>';
         }
@@ -433,6 +441,34 @@ async function playFavoritos() {
     } catch (error) {
         console.error('Erro ao tocar favoritos:', error);
         alert('Erro ao carregar músicas favoritadas');
+    }
+}
+
+// Mostrar músicas de uma playlist
+async function mostrarPlaylist(playlistId) {
+    try {
+        const response = await fetch(`${API_URL}/playlists/${playlistId}`, {
+            headers: { 'Authorization': `Bearer ${token}` }
+        });
+
+        if (response.ok) {
+            const data = await response.json();
+            if (data.success && data.data) {
+                const playlist = data.data;
+                const musicas = playlist.musicas || [];
+                
+                // Redirecionar para explorar.html com parâmetro de playlist
+                window.location.href = `/explorar.html?playlist=${playlistId}`;
+            } else {
+                alert('Erro ao carregar playlist');
+            }
+        } else {
+            console.error('Erro ao carregar playlist:', response.status);
+            alert('Erro ao carregar playlist');
+        }
+    } catch (error) {
+        console.error('Erro ao carregar playlist:', error);
+        alert('Erro ao carregar playlist');
     }
 }
 
